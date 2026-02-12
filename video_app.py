@@ -141,7 +141,7 @@ def main():
                         df = analyze_videos(file_paths)
                         
                         st.success("Analysis Complete!")
-                        st.dataframe(df, use_container_width=True)
+                        st.dataframe(df, width="stretch")
                         
                         # Excel Export logic moved to reuse
                         output = BytesIO()
@@ -194,7 +194,7 @@ def main():
                     df = analyze_videos(temp_file_paths, original_names)
                     
                     st.success("Analysis Complete!")
-                    st.dataframe(df, use_container_width=True)
+                    st.dataframe(df, width="stretch")
                     
                     # Excel Export
                     output = BytesIO()
