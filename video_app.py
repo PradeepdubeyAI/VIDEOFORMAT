@@ -3,6 +3,8 @@ import os
 import pandas as pd
 import ffmpeg
 import json
+import tempfile
+import shutil
 from io import BytesIO
 
 def get_video_metadata(file_path):
@@ -45,9 +47,6 @@ def get_video_metadata(file_path):
         return "Error", "Error", f"FFmpeg Error: {e.stderr.decode('utf8') if e.stderr else 'Unknown'}"
     except Exception as e:
         return "Error", "Error", f"Exception: {str(e)}"
-
-import tempfile
-import shutil
 
 def analyze_videos(file_list, original_names=None):
     """
@@ -182,10 +181,10 @@ def main():
                     original_names = []
                     
                     for uploaded_file in uploaded_files:
-                        # Save each file to temp dir
+                        # Save each file to temp dir (streaming to avoid memory spike)
                         temp_path = os.path.join(temp_dir, uploaded_file.name)
                         with open(temp_path, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
+                            shutil.copyfileobj(uploaded_file, f)
                         
                         temp_file_paths.append(temp_path)
                         original_names.append(uploaded_file.name)
