@@ -135,7 +135,6 @@ def render_quick_check():
     <head>
         <meta charset="utf-8" />
         <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.5.0/dist/streamlit-component-lib.js"></script>
         <style>
             body { font-family: sans-serif; padding: 10px; }
             #fileInput { margin: 10px 0; }
@@ -154,144 +153,83 @@ def render_quick_check():
                 margin-top: 12px;
                 padding: 12px;
                 border: 1px solid #d0d7de;
-                border-radius: 6px;
-                background: #f6f8fa;
-                font-size: 13px;
-                max-height: 220px;
-                overflow-y: auto;
-            }
-            #debugLog div { margin-bottom: 6px; }
-        </style>
-    </head>
-    <body>
-        <input type="file" id="fileInput" multiple accept="video/*,.mp4,.mov,.m4v">
-        <button id="analyzeBtn">Analyze</button>
-        <div id="status"></div>
-        <div id="debugLog"><strong>Debug Timeline</strong></div>
+                <script>
+                    const timelineEntries = [];
+                    const fileInput = document.getElementById('fileInput');
+                    const analyzeBtn = document.getElementById('analyzeBtn');
+                    const status = document.getElementById('status');
+                    const debugLog = document.getElementById('debugLog');
+                    const TIMEOUT_MS = 45000;
+                    const CHUNK_SIZE = 4 * 1024 * 1024;
+                    const toMb = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
 
-        <script>
-            const timelineEntries = [];
-            const timelineEntries = [];
-            const fileInput = document.getElementById('fileInput');
-            const analyzeBtn = document.getElementById('analyzeBtn');
-            const status = document.getElementById('status');
-            const debugLog = document.getElementById('debugLog');
-            const TIMEOUT_MS = 45000;
-            const CHUNK_SIZE = 4 * 1024 * 1024;
-            const toMb = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
+                    let streamlitId = null;
+                    let postMessageErrorLogged = false;
 
-            let streamlitRef = null;
-            let waitingForStreamlit = false;
-            let parentAccessLogged = false;
-            const STREAMLIT_POLL_INTERVAL = 250;
-            const STREAMLIT_POLL_TIMEOUT = 8000;
+                    const postToStreamlit = (type, data = {}) => {
+                        if (streamlitId === null) {
+                            return false;
+                        }
+                        try {
+                            window.parent.postMessage({ type, id: streamlitId, ...data }, '*');
+                            return true;
+                        } catch (error) {
+                            if (!postMessageErrorLogged) {
+                                postMessageErrorLogged = true;
+                                logStep(`⚠️ postMessage to parent failed: ${error.message}`);
+                            }
+                            return false;
+                        }
+                    };
 
-            const logStep = (message) => {
-                timelineEntries.push(message);
-                const entry = document.createElement('div');
-                entry.textContent = message;
-                debugLog.appendChild(entry);
-                updateFrameHeight();
-            };
+                    const updateFrameHeight = () => {
+                        if (streamlitId !== null) {
+                            postToStreamlit('streamlit:setFrameHeight', { height: document.body.scrollHeight });
+                        }
+                    };
 
-            const getStreamlit = () => {
-                if (streamlitRef) {
-                    return streamlitRef;
-                }
+                    const logStep = (message) => {
+                        timelineEntries.push(message);
+                        const entry = document.createElement('div');
+                        entry.textContent = message;
+                        debugLog.appendChild(entry);
+                        updateFrameHeight();
+                    };
 
-                if (window.Streamlit) {
-                    return window.Streamlit;
-                }
+                    const setComponentReady = () => {
+                        postToStreamlit('streamlit:setComponentReady');
+                    };
 
-                try {
-                    if (window.parent && window.parent.Streamlit) {
-                        return window.parent.Streamlit;
-                    }
-                } catch (error) {
-                    if (!parentAccessLogged) {
-                        parentAccessLogged = true;
-                        logStep(`⚠️ Accessing parent Streamlit blocked: ${error.message}`);
-                    }
-                }
+                    const sendComponentValue = (value) => {
+                        if (streamlitId === null) {
+                            logStep('⚠️ Cannot send results to Streamlit yet (no component id).');
+                            return false;
+                        }
+                        return postToStreamlit('streamlit:setComponentValue', { value });
+                    };
 
-                return null;
-            };
+                    window.addEventListener('message', (event) => {
+                        const data = event.data;
+                        if (!data || !data.type) {
+                            return;
+                        }
+                        if (data.type === 'streamlit:render') {
+                            streamlitId = data.id;
+                            logStep(`✅ Connected to Streamlit (component id: ${streamlitId}).`);
+                            if (data.args && Object.keys(data.args).length > 0) {
+                                logStep(`Received args: ${JSON.stringify(data.args)}`);
+                            }
+                            setComponentReady();
+                            updateFrameHeight();
+                        }
+                    });
 
-            const updateFrameHeight = () => {
-                const streamlit = getStreamlit();
-                if (streamlit && streamlit.setFrameHeight) {
-                    streamlit.setFrameHeight(document.body.scrollHeight);
-                }
-            };
-
-            const setupStreamlit = (streamlit) => {
-                if (!streamlit || setupStreamlit.initialized) {
-                    return;
-                }
-
-                setupStreamlit.initialized = true;
-                streamlitRef = streamlit;
-                logStep('✅ Streamlit object detected.');
-
-                if (streamlit.events && streamlit.RENDER_EVENT && streamlit.events.addEventListener) {
-                    streamlit.events.addEventListener(streamlit.RENDER_EVENT, () => {
-                        logStep('↻ Streamlit render event received.');
+                    window.addEventListener('load', () => {
+                        logStep('Component loaded. Waiting for Streamlit render event...');
                         updateFrameHeight();
                     });
-                } else {
-                    logStep('⚠️ Streamlit events API unavailable.');
-                }
 
-                if (streamlit.setComponentReady) {
-                    streamlit.setComponentReady();
-                    logStep('✅ setComponentReady invoked.');
-                } else {
-                    logStep('⚠️ setComponentReady unavailable on Streamlit object.');
-                }
-
-                if (streamlit.setComponentValue) {
-                    logStep('✅ setComponentValue is available.');
-                } else {
-                    logStep('⚠️ setComponentValue not available.');
-                }
-
-                updateFrameHeight();
-            };
-
-            const waitForStreamlit = () => {
-                if (waitingForStreamlit) {
-                    return;
-                }
-
-                waitingForStreamlit = true;
-                let attempts = 0;
-                const maxAttempts = Math.ceil(STREAMLIT_POLL_TIMEOUT / STREAMLIT_POLL_INTERVAL);
-
-                const intervalId = setInterval(() => {
-                    const streamlit = getStreamlit();
-                    attempts += 1;
-
-                    if (streamlit) {
-                        clearInterval(intervalId);
-                        waitingForStreamlit = false;
-                        logStep(`✅ Streamlit object available after ${attempts} attempt(s).`);
-                        setupStreamlit(streamlit);
-                    } else if (attempts >= maxAttempts) {
-                        clearInterval(intervalId);
-                        waitingForStreamlit = false;
-                        logStep('⚠️ Streamlit object not available after waiting. Staying in standalone mode.');
-                    }
-                }, STREAMLIT_POLL_INTERVAL);
-            };
-
-            window.addEventListener('load', () => {
-                waitForStreamlit();
-                updateFrameHeight();
-            });
-
-            waitForStreamlit();
-
-            analyzeBtn.addEventListener('click', async () => {
+                    analyzeBtn.addEventListener('click', async () => {
                 const files = fileInput.files;
                 if (files.length === 0) {
                     alert('Please select video files first');
@@ -346,14 +284,12 @@ def render_quick_check():
                     const encodedPayload = btoa(utf8Bytes);
                     logStep(`Encoded payload size (base64): ${encodedPayload.length} characters.`);
 
-                    const streamlit = getStreamlit();
-                    if (streamlit && streamlit.setComponentValue) {
-                        logStep('Sending results to Streamlit parent via component bridge...');
-                        streamlit.setComponentValue({
-                            metadata: metadata,
-                            timeline: timelineEntries,
-                            payloadSize: encodedPayload.length
-                        });
+                    logStep('Attempting to send results to Streamlit parent via postMessage bridge...');
+                    if (sendComponentValue({
+                        metadata: metadata,
+                        timeline: timelineEntries,
+                        payloadSize: encodedPayload.length
+                    })) {
                         status.textContent = 'Results sent to Streamlit.';
                         logStep('✅ Component bridge send complete.');
                         analyzeBtn.disabled = false;
