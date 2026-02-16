@@ -351,8 +351,12 @@ def main():
             # Display the component
             component_value = st.components.v1.html(html_code, height=120, scrolling=False)
             
+            # Debug: Show what we received
+            st.write(f"Debug - component_value type: {type(component_value)}")
+            st.write(f"Debug - component_value: {component_value}")
+            
             # Process results from JavaScript
-            if component_value and isinstance(component_value, list):
+            if component_value and isinstance(component_value, list) and len(component_value) > 0:
                 st.success(f"✅ Quick Check completed for {len(component_value)} files!")
                 
                 # Valid Formats and Codecs
