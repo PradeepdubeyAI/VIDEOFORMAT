@@ -9,7 +9,7 @@ import streamlit as st
 
 def render_quick_check():
     """Handle the Quick Check (client-side) workflow."""
-    st.info("🚀 Quick Check: Files analyzed in your browser without uploading. Works with MP4/MOV files.")
+    st.info("🚀 Quick Check: Files analyzed in your browser without uploading. Full analysis for MP4/MOV files, basic info for others.")
 
     metadata_list = None
     timeline_entries = []
@@ -107,8 +107,8 @@ def render_quick_check():
     </head>
     <body>
         <div id="fileInputWrapper">
-            <label id="fileLabel" for="fileInput">Select MP4/MOV files:</label>
-            <input type="file" id="fileInput" multiple accept="video/*,.mp4,.mov,.m4v">
+            <label id="fileLabel" for="fileInput">Select video files:</label>
+            <input type="file" id="fileInput" multiple accept="video/*">
             <button id="analyzeBtn">Analyze</button>
             <button id="downloadBtn">📥 Download Excel</button>
         </div>
