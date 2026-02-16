@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import pandas as pd
 import ffmpeg
+import json
 import tempfile
 import shutil
 import time
@@ -167,78 +168,223 @@ def main():
 
     elif input_method == "Upload Files":
         st.subheader("📤 File Upload Analysis")
-        st.markdown("**Choose your validation method:**\n- **Quick Check:** Format & size only (instant, 50+ files)\n- **Full Analysis:** Format, codecs & size (complete, may timeout with many files)")
+        st.markdown("Upload video files directly from your computer.")
         
-        # Tab selection for analysis method
-        analysis_tab = st.radio(
-            "Select Analysis Method:",
-            ("🚀 Quick Check (Format & Size Only - No Upload)", "📤 Full Analysis (Format, Codec & Size - Requires Upload)"),
-            help="Quick Check: Instant results, validates format and size only. Full Analysis: Complete validation including codecs, but slower for large files."
+        # Processing method selection
+        st.markdown("---")
+        processing_method = st.radio(
+            "⚙️ Select Analysis Method:",
+            ("Standard Upload (Server-side)", "Quick Check (Client-side - EXPERIMENTAL)"),
+            help="Standard: Full upload + ffprobe analysis. Quick Check: Browser reads metadata only (no upload, much faster)."
         )
         
-        if analysis_tab == "🚀 Quick Check (Format & Size Only - Fast)":
-            st.info("💡 **Quick Check:** Fast validation of format and file size. Codec validation not available (use Full Analysis for codecs).")
+        if processing_method == "Quick Check (Client-side - EXPERIMENTAL)":
+            st.info("🚀 Quick Check analyzes videos in your browser without uploading them. Perfect for 10+ files!")
             
-            uploaded_files = st.file_uploader("Choose video files", accept_multiple_files=True, type=['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'webm', 'm4v'], key="quick_check")
-            
-            if uploaded_files:
-                st.success(f"✅ {len(uploaded_files)} file(s) loaded!")
+            # Custom HTML component for mp4box.js
+            html_code = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
+                <style>
+                    body { font-family: sans-serif; padding: 20px; }
+                    #fileInput { margin: 10px 0; }
+                    #analyzeBtn { 
+                        background: #FF4B4B; 
+                        color: white; 
+                        padding: 10px 20px; 
+                        border: none; 
+                        border-radius: 5px; 
+                        cursor: pointer; 
+                        font-size: 16px;
+                    }
+                    #analyzeBtn:hover { background: #FF6B6B; }
+                    #status { margin: 10px 0; color: #0066cc; }
+                    #results { margin: 20px 0; }
+                </style>
+            </head>
+            <body>
+                <input type="file" id="fileInput" multiple accept="video/*">
+                <button id="analyzeBtn">Analyze Videos</button>
+                <div id="status"></div>
+                <div id="results"></div>
                 
-                if st.button("Quick Check - Analyze Format & Size", key="quick_analyze"):
-                    st.info(f"Analyzing {len(uploaded_files)} files...")
+                <script>
+                    const fileInput = document.getElementById('fileInput');
+                    const analyzeBtn = document.getElementById('analyzeBtn');
+                    const status = document.getElementById('status');
+                    const results = document.getElementById('results');
                     
-                    # Valid Formats
-                    valid_formats = ['mp4', 'mov', 'm4v']
-                    
-                    results = []
-                    progress_bar = st.progress(0)
-                    
-                    for idx, uploaded_file in enumerate(uploaded_files):
-                        # Get basic info without saving file
-                        file_name = uploaded_file.name
-                        file_size_bytes = uploaded_file.size
-                        file_size_mb = file_size_bytes / (1024 * 1024)
+                    analyzeBtn.addEventListener('click', async () => {
+                        const files = fileInput.files;
+                        if (files.length === 0) {
+                            alert('Please select video files first');
+                            return;
+                        }
                         
-                        # Extract format from extension
-                        ext = file_name.split('.')[-1].lower() if '.' in file_name else 'unknown'
+                        status.textContent = `Analyzing ${files.length} files...`;
+                        const metadata = [];
                         
-                        # Validation
-                        format_flag = "good to go" if ext in valid_formats else "error"
-                        size_flag = "good to go" if file_size_mb <= 200 else "error"
+                        for (let i = 0; i < files.length; i++) {
+                            const file = files[i];
+                            status.textContent = `Processing ${i + 1}/${files.length}: ${file.name}`;
+                            
+                            try {
+                                const data = await analyzeFile(file);
+                                metadata.push(data);
+                            } catch (error) {
+                                metadata.push({
+                                    fileName: file.name,
+                                    format: 'error',
+                                    videoCodec: 'error',
+                                    audioCodec: error.message,
+                                    size: file.size
+                                });
+                            }
+                        }
                         
-                        results.append({
-                            "File Name": file_name,
-                            "Video Format": ext,
-                            "Video Format Flag": format_flag,
-                            "Video Codecs": "Not checked (Quick Check mode)",
-                            "Video Codecs Flag": "not validated",
-                            "File Size": f"{file_size_mb:.2f} MB",
-                            "File Size Flag": size_flag
-                        })
-                        
-                        progress_bar.progress((idx + 1) / len(uploaded_files))
+                        // Send results back to Streamlit
+                        status.textContent = 'Analysis complete! Sending results...';
+                        window.parent.postMessage({
+                            type: 'streamlit:setComponentValue',
+                            value: metadata
+                        }, '*');
+                    });
                     
-                    df = pd.DataFrame(results)
-                    st.success(f"✅ Quick Check Complete!")
-                    st.dataframe(df, width="stretch")
-                    
-                    # Excel Export
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df.to_excel(writer, index=False, sheet_name='Video Metadata')
-                    processed_data = output.getvalue()
-                    
-                    st.download_button(
-                        label="📥 Download Excel Report",
-                        data=processed_data,
-                        file_name="video_quickcheck_report.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-        
-        else:  # Full Analysis (Upload method)
-            st.info("📊 **Full validation:** Checks format, codecs (h264/hevc/mpeg), and file size.")
-            st.warning("⚠️ This method may timeout with 10+ large files due to upload limits.")
+                    async function analyzeFile(file) {
+                        return new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            const chunkSize = 1024 * 1024; // Read first 1MB
+                            
+                            reader.onload = (e) => {
+                                try {
+                                    const mp4boxfile = MP4Box.createFile();
+                                    let format = 'unknown';
+                                    let videoCodec = 'unknown';
+                                    let audioCodec = 'none';
+                                    
+                                    mp4boxfile.onError = (e) => {
+                                        // Check file extension for non-MP4/MOV files
+                                        const ext = file.name.split('.').pop().toLowerCase();
+                                        if (['mp4', 'mov', 'm4v'].includes(ext)) {
+                                            reject(new Error('Parse error'));
+                                        } else {
+                                            resolve({
+                                                fileName: file.name,
+                                                format: ext,
+                                                videoCodec: 'N/A',
+                                                audioCodec: 'N/A',
+                                                size: file.size
+                                            });
+                                        }
+                                    };
+                                    
+                                    mp4boxfile.onReady = (info) => {
+                                        // Detect format
+                                        format = info.brand || 'mp4';
+                                        if (format.includes('qt')) format = 'mov';
+                                        else if (format.includes('mp4') || format.includes('isom')) format = 'mp4';
+                                        
+                                        // Extract video codec
+                                        const videoTrack = info.videoTracks[0];
+                                        if (videoTrack) {
+                                            const codec = videoTrack.codec;
+                                            if (codec.includes('avc') || codec.includes('h264')) videoCodec = 'h264';
+                                            else if (codec.includes('hvc') || codec.includes('hev') || codec.includes('h265')) videoCodec = 'hevc';
+                                            else videoCodec = codec;
+                                        }
+                                        
+                                        // Extract audio codec
+                                        const audioTrack = info.audioTracks[0];
+                                        if (audioTrack) {
+                                            const codec = audioTrack.codec;
+                                            if (codec.includes('mp4a')) audioCodec = 'aac';
+                                            else audioCodec = codec;
+                                        }
+                                        
+                                        resolve({
+                                            fileName: file.name,
+                                            format: format,
+                                            videoCodec: videoCodec,
+                                            audioCodec: audioCodec,
+                                            size: file.size
+                                        });
+                                    };
+                                    
+                                    const buffer = e.target.result;
+                                    buffer.fileStart = 0;
+                                    mp4boxfile.appendBuffer(buffer);
+                                    mp4boxfile.flush();
+                                    
+                                } catch (error) {
+                                    reject(error);
+                                }
+                            };
+                            
+                            reader.onerror = () => reject(new Error('File read error'));
+                            reader.readAsArrayBuffer(file.slice(0, chunkSize));
+                        });
+                    }
+                </script>
+            </body>
+            </html>
+            """
             
+            # Display the component
+            component_value = st.components.v1.html(html_code, height=200, scrolling=False)
+            
+            # Process results from JavaScript
+            if component_value:
+                st.success("✅ Metadata received from browser!")
+                
+                # Valid Formats and Codecs
+                valid_formats = ['mp4', 'mov']
+                valid_codecs = ['h264', 'avc', 'hevc', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2']
+                
+                results = []
+                for item in component_value:
+                    file_name = item['fileName']
+                    fmt = item['format']
+                    v_codec = item['videoCodec']
+                    a_codec = item['audioCodec']
+                    file_size_bytes = item['size']
+                    file_size_mb = file_size_bytes / (1024 * 1024)
+                    
+                    # Validation
+                    format_flag = "good to go" if fmt.lower() in valid_formats else "error"
+                    codec_flag = "good to go" if v_codec.lower() in valid_codecs else "error"
+                    size_flag = "good to go" if file_size_mb <= 200 else "error"
+                    
+                    results.append({
+                        "File Name": file_name,
+                        "Video Format": fmt,
+                        "Video Format Flag": format_flag,
+                        "Video Codecs": f"Video: {v_codec}, Audio: {a_codec}",
+                        "Video Codecs Flag": codec_flag,
+                        "File Size": f"{file_size_mb:.2f} MB",
+                        "File Size Flag": size_flag
+                    })
+                
+                df = pd.DataFrame(results)
+                st.dataframe(df, width="stretch")
+                
+                # Excel Export
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Video Metadata')
+                processed_data = output.getvalue()
+                
+                st.download_button(
+                    label="📥 Download Excel Report",
+                    data=processed_data,
+                    file_name="video_metadata_quick_report.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        
+        else:
+            # Standard upload method
+            st.info("📤 Standard method: Full upload + server-side ffprobe analysis (most accurate)")
             uploaded_files = st.file_uploader("Choose video files", accept_multiple_files=True, type=['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'webm', 'm4v'])
 
             if uploaded_files:
