@@ -135,10 +135,7 @@ def render_quick_check():
     <head>
         <meta charset="utf-8" />
         <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
-        <script>
-            // Streamlit component communication setup
-            window.Streamlit = window.parent.Streamlit || window.Streamlit;
-        </script>
+        <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.5.0/dist/streamlit-component-lib.js"></script>
         <style>
             body { font-family: sans-serif; padding: 10px; }
             #fileInput { margin: 10px 0; }
@@ -196,25 +193,34 @@ def render_quick_check():
                 updateFrameHeight();
             };
 
-            window.addEventListener('load', () => {
+            function onRender(event) {
                 if (window.Streamlit) {
-                    logStep('Streamlit object detected.');
-                    if (window.Streamlit.setComponentReady) {
-                        window.Streamlit.setComponentReady();
-                        logStep('Component ready signal sent to Streamlit.');
-                    } else {
-                        logStep('⚠️ setComponentReady not available.');
-                    }
+                    logStep('✅ Streamlit component lib loaded and initialized.');
                     if (window.Streamlit.setComponentValue) {
-                        logStep('setComponentValue is available.');
+                        logStep('✅ setComponentValue is available.');
                     } else {
                         logStep('⚠️ setComponentValue not available.');
                     }
+                    window.Streamlit.setFrameHeight(document.body.scrollHeight);
                 } else {
-                    logStep('⚠️ Streamlit object not found. Running in standalone mode.');
+                    logStep('⚠️ Streamlit object not found after load.');
                 }
-                updateFrameHeight();
-            });
+            }
+
+            if (window.Streamlit) {
+                window.Streamlit.events.addEventListener(window.Streamlit.RENDER_EVENT, onRender);
+                window.Streamlit.setComponentReady();
+            } else {
+                window.addEventListener('load', () => {
+                    if (window.Streamlit) {
+                        window.Streamlit.events.addEventListener(window.Streamlit.RENDER_EVENT, onRender);
+                        window.Streamlit.setComponentReady();
+                    } else {
+                        logStep('⚠️ Streamlit object not found. Running in standalone mode.');
+                    }
+                    updateFrameHeight();
+                });
+            }
 
             analyzeBtn.addEventListener('click', async () => {
                 const files = fileInput.files;
