@@ -176,8 +176,8 @@ def main():
             help="Quick Check: Instant results, validates format and size only. Full Analysis: Complete validation including codecs, but slower for large files."
         )
         
-        if analysis_tab == "🚀 Quick Check (Format & Size Only - No Upload)":
-            st.info("💡 **Quick Check:** Validates format and file size instantly without uploading videos. Codec validation not available in this mode.")
+        if analysis_tab == "🚀 Quick Check (Format & Size Only - Fast)":
+            st.info("💡 **Quick Check:** Fast validation of format and file size. Codec validation not available (use Full Analysis for codecs).")
             
             uploaded_files = st.file_uploader("Choose video files", accept_multiple_files=True, type=['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'webm', 'm4v'], key="quick_check")
             
