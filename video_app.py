@@ -1,114 +1,582 @@
-import streamlit as st
 import os
-import pandas as pd
-import ffmpeg
 import json
-import tempfile
 import shutil
+import tempfile
 import time
 from io import BytesIO
 
-def get_video_metadata(file_path):
-    """
-    Extracts video format and codec information using ffprobe.
-    """
+import ffmpeg
+import pandas as pd
+import streamlit as st
+
+
+def get_video_metadata(file_path: str):
+    """Extract container and codec information using ffprobe."""
     try:
-        # Run ffprobe to get metadata in JSON format
         probe = ffmpeg.probe(file_path)
-        
-        format_info = probe.get('format', {})
-        streams = probe.get('streams', [])
-        
-        container_format = format_info.get('format_name', 'Unknown')
-        
-        # Clean up container format (e.g., "mov,mp4,m4a..." -> "mp4")
-        if ',' in container_format:
-            formats = container_format.split(',')
-            # Try to find the format that matches the file extension
-            ext = file_path.split('.')[-1].lower() if '.' in file_path else ''
-            if ext in formats:
-                container_format = ext
-            else:
-                container_format = formats[0] # Fallback to the first one
-        
-        # Extract codecs
-        video_codec = 'Unknown'
-        audio_codec = 'None'
-        
-        video_streams = [s for s in streams if s['codec_type'] == 'video']
+        format_info = probe.get("format", {})
+        streams = probe.get("streams", [])
+
+        container_format = format_info.get("format_name", "Unknown")
+        if "," in container_format:
+            formats = container_format.split(",")
+            ext = file_path.split(".")[-1].lower() if "." in file_path else ""
+            container_format = ext if ext in formats else formats[0]
+
+        video_codec = "Unknown"
+        audio_codec = "None"
+
+        video_streams = [stream for stream in streams if stream.get("codec_type") == "video"]
         if video_streams:
-            video_codec = video_streams[0].get('codec_name', 'Unknown')
-            
-        audio_streams = [s for s in streams if s['codec_type'] == 'audio']
+            video_codec = video_streams[0].get("codec_name", "Unknown")
+
+        audio_streams = [stream for stream in streams if stream.get("codec_type") == "audio"]
         if audio_streams:
-            audio_codec = audio_streams[0].get('codec_name', 'Unknown')
-            
+            audio_codec = audio_streams[0].get("codec_name", "Unknown")
+
         return container_format, video_codec, audio_codec
-    except ffmpeg.Error as e:
-        return "Error", "Error", f"FFmpeg Error: {e.stderr.decode('utf8') if e.stderr else 'Unknown'}"
-    except Exception as e:
-        return "Error", "Error", f"Exception: {str(e)}"
+    except ffmpeg.Error as exc:
+        message = exc.stderr.decode("utf8") if exc.stderr else "Unknown"
+        return "Error", "Error", f"FFmpeg Error: {message}"
+    except Exception as exc:  # pylint: disable=broad-except
+        return "Error", "Error", f"Exception: {exc}"
+
 
 def analyze_videos(file_list, original_names=None):
-    """
-    Analyzes a list of video files and returns a DataFrame.
-    file_list: List of absolute file paths to process.
-    original_names: List of display names corresponding to file_list (optional).
-    """
+    """Run ffprobe sequentially for each video and return a DataFrame."""
     results = []
     progress_bar = st.progress(0)
-    
-    # Valid Formats and Codecs
-    valid_formats = ['mp4', 'mov']
-    valid_codecs = ['h264', 'avc', 'hevc', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2']
-    
+
+    valid_formats = ["mp4", "mov"]
+    valid_codecs = [
+        "h264",
+        "avc",
+        "hevc",
+        "h265",
+        "mpeg1video",
+        "mpeg2video",
+        "mpeg1",
+        "mpeg2",
+    ]
+
     total_files = len(file_list)
 
-    for i, file_path in enumerate(file_list):
-        # Use provided display name if available, else basename
-        if original_names:
-            file_name = original_names[i]
-        else:
-            file_name = os.path.basename(file_path)
-            
+    for index, file_path in enumerate(file_list):
+        file_name = original_names[index] if original_names else os.path.basename(file_path)
+
         fmt, v_codec, a_codec = get_video_metadata(file_path)
-        
-        # Logic for Video Format Flag
+
         format_flag = "good to go" if fmt.lower() in valid_formats else "error"
-        
-        # Logic for Video Codecs Flag
         codec_flag = "good to go" if v_codec.lower() in valid_codecs else "error"
 
-        # Logic for File Size
         file_size_bytes = os.path.getsize(file_path)
         file_size_mb = file_size_bytes / (1024 * 1024)
         size_flag = "good to go" if file_size_mb <= 200 else "error"
 
-        results.append({
-            "File Name": file_name,
-            "Video Format": fmt,
-            "Video Format Flag": format_flag,
-            "Video Codecs": f"Video: {v_codec}, Audio: {a_codec}", 
-            "Video Codecs Flag": codec_flag,
-            "File Size": f"{file_size_mb:.2f} MB",
-            "File Size Flag": size_flag
-        })
-        progress_bar.progress((i + 1) / total_files)
-    
+        results.append(
+            {
+                "File Name": file_name,
+                "Video Format": fmt,
+                "Video Format Flag": format_flag,
+                "Video Codecs": f"Video: {v_codec}, Audio: {a_codec}",
+                "Video Codecs Flag": codec_flag,
+                "File Size": f"{file_size_mb:.2f} MB",
+                "File Size Flag": size_flag,
+            }
+        )
+        progress_bar.progress((index + 1) / total_files)
+
     return pd.DataFrame(results)
+
+
+def render_quick_check():
+    """Handle the Quick Check (client-side) workflow."""
+    st.info("🚀 Quick Check: Files analyzed in your browser without uploading. Works with MP4/MOV files.")
+
+    st.write("🔍 **Debug Info:**")
+    query_params = dict(st.query_params)
+    st.write(f"All query params: {query_params}")
+
+    results_param = st.query_params.get("results")
+    st.write(f"Results param exists: {results_param is not None}")
+
+    metadata_list = None
+    timeline_entries = []
+    payload_size = None
+
+    if results_param:
+        import base64
+
+        try:
+            st.write(f"Results param length: {len(results_param)} characters")
+            st.write(f"First 100 chars: {results_param[:100]}...")
+            decoded = base64.b64decode(results_param).decode("utf-8")
+            st.write(f"Decoded payload length: {len(decoded)} characters")
+            decoded_payload = json.loads(decoded)
+            if isinstance(decoded_payload, dict) and "metadata" in decoded_payload:
+                metadata_list = decoded_payload.get("metadata", [])
+                timeline_entries = decoded_payload.get("timeline", [])
+            else:
+                metadata_list = decoded_payload
+            st.write(f"Parsed {len(metadata_list)} items from URL payload")
+            payload_size = len(results_param)
+        except Exception as exc:  # pylint: disable=broad-except
+            st.error(f"Error decoding results: {exc}")
+
+    st.write("---")
+    st.write("🧭 **Client-side Steps:**")
+    st.write("1️⃣ Choose MP4/MOV files using the picker below")
+    st.write("2️⃣ Click Analyze to run browser-side metadata extraction")
+    st.write("3️⃣ Watch the timeline for progress updates")
+    st.write("4️⃣ Results appear here without uploading")
+
+    html_code = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8" />
+        <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
+        <style>
+            body { font-family: sans-serif; padding: 10px; }
+            #fileInput { margin: 10px 0; }
+            #analyzeBtn {
+                background: #FF4B4B;
+                color: white;
+                padding: 8px 20px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                margin-left: 10px;
+            }
+            #analyzeBtn:disabled { background: #ccc; }
+            #status { margin-top: 10px; color: #0066cc; font-weight: 500; }
+            #debugLog {
+                margin-top: 12px;
+                padding: 12px;
+                border: 1px solid #d0d7de;
+                border-radius: 6px;
+                background: #f6f8fa;
+                font-size: 13px;
+                max-height: 220px;
+                overflow-y: auto;
+            }
+            #debugLog div { margin-bottom: 6px; }
+        </style>
+    </head>
+    <body>
+        <input type="file" id="fileInput" multiple accept="video/*,.mp4,.mov,.m4v">
+        <button id="analyzeBtn">Analyze</button>
+        <div id="status"></div>
+        <div id="debugLog"><strong>Debug Timeline</strong></div>
+
+        <script>
+            const getStreamlit = () => (window.parent && window.parent.Streamlit) ? window.parent.Streamlit : null;
+            const timelineEntries = [];
+            const fileInput = document.getElementById('fileInput');
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            const status = document.getElementById('status');
+            const debugLog = document.getElementById('debugLog');
+            const TIMEOUT_MS = 5000;
+
+            const updateFrameHeight = () => {
+                const Streamlit = getStreamlit();
+                if (Streamlit && Streamlit.setFrameHeight) {
+                    Streamlit.setFrameHeight(document.body.scrollHeight);
+                }
+            };
+
+            const logStep = (message) => {
+                timelineEntries.push(message);
+                const entry = document.createElement('div');
+                entry.textContent = message;
+                debugLog.appendChild(entry);
+                updateFrameHeight();
+            };
+
+            window.addEventListener('load', () => {
+                const Streamlit = getStreamlit();
+                if (Streamlit && Streamlit.setComponentReady) {
+                    Streamlit.setComponentReady();
+                }
+                updateFrameHeight();
+            });
+
+            analyzeBtn.addEventListener('click', async () => {
+                const files = fileInput.files;
+                if (files.length === 0) {
+                    alert('Please select video files first');
+                    return;
+                }
+
+                analyzeBtn.disabled = true;
+                status.textContent = `Analyzing ${files.length} file(s)...`;
+                logStep(`Selected ${files.length} file(s). Starting analysis...`);
+
+                const metadata = [];
+
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    status.textContent = `Processing ${i + 1}/${files.length}: ${file.name}`;
+                    logStep(`Processing file ${i + 1}: ${file.name}`);
+
+                    try {
+                        const data = await Promise.race([
+                            analyzeFile(file),
+                            timeout(TIMEOUT_MS)
+                        ]);
+                        metadata.push(data);
+                    } catch (error) {
+                        console.error(`Error processing ${file.name}:`, error);
+                        logStep(`⚠️ Error on ${file.name}: ${error.message}`);
+                        metadata.push({
+                            fileName: file.name,
+                            format: 'error',
+                            videoCodec: 'error',
+                            audioCodec: error.message || 'timeout',
+                            size: file.size
+                        });
+                    }
+                }
+
+                status.textContent = 'Complete! Returning results...';
+                logStep(`Analysis complete. Preparing ${metadata.length} result(s) for return.`);
+
+                const payload = {
+                    metadata: metadata,
+                    timeline: timelineEntries
+                };
+
+                const jsonStr = JSON.stringify(payload);
+                const encodedPayload = btoa(jsonStr);
+                logStep(`Encoded payload size (base64): ${encodedPayload.length} characters.`);
+
+                const Streamlit = getStreamlit();
+                if (Streamlit && Streamlit.setComponentValue) {
+                    logStep('Sending results to Streamlit parent via component bridge...');
+                    Streamlit.setComponentValue({
+                        metadata: metadata,
+                        timeline: timelineEntries,
+                        payloadSize: encodedPayload.length
+                    });
+                    analyzeBtn.disabled = false;
+                    updateFrameHeight();
+                    return;
+                }
+
+                logStep('Component bridge unavailable. Attempting parent redirect...');
+                const parentWindow = window.parent;
+                if (parentWindow && parentWindow.location) {
+                    try {
+                        const baseUrl = parentWindow.location.href.split('?')[0];
+                        parentWindow.location.href = baseUrl + '?results=' + encodeURIComponent(encodedPayload);
+                        logStep('Parent redirect triggered.');
+                    } catch (redirectError) {
+                        logStep(`❌ Redirect blocked: ${redirectError.message}`);
+                    }
+                } else {
+                    logStep('❌ Unable to access parent window. Please open Quick Check in a new tab.');
+                }
+            });
+
+            function timeout(ms) {
+                return new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Processing timeout')), ms)
+                );
+            }
+
+            async function analyzeFile(file) {
+                return new Promise((resolve, reject) => {
+                    const ext = file.name.split('.').pop().toLowerCase();
+
+                    if (!['mp4', 'mov', 'm4v'].includes(ext)) {
+                        logStep(`Skipping ${file.name} (extension ${ext}) - treated as non-MP4.`);
+                        resolve({
+                            fileName: file.name,
+                            format: ext,
+                            videoCodec: 'N/A',
+                            audioCodec: 'N/A',
+                            size: file.size
+                        });
+                        return;
+                    }
+
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        try {
+                            const buffer = event.target.result;
+                            const mp4boxfile = MP4Box.createFile();
+                            let resolved = false;
+
+                            mp4boxfile.onError = () => {
+                                if (!resolved) {
+                                    resolved = true;
+                                    logStep(`❌ MP4Box parse error on ${file.name}`);
+                                    reject(new Error('MP4Box parse error'));
+                                }
+                            };
+
+                            mp4boxfile.onReady = (info) => {
+                                if (resolved) {
+                                    return;
+                                }
+                                resolved = true;
+
+                                let format = info.brand || 'mp4';
+                                if (format && format.includes('qt')) {
+                                    format = 'mov';
+                                } else if (format && (format.includes('mp4') || format.includes('isom'))) {
+                                    format = 'mp4';
+                                }
+
+                                let videoCodec = 'unknown';
+                                const videoTrack = info.videoTracks[0];
+                                if (videoTrack) {
+                                    const codec = videoTrack.codec || '';
+                                    if (codec.includes('avc') || codec.includes('h264')) {
+                                        videoCodec = 'h264';
+                                    } else if (codec.includes('hvc') || codec.includes('hev') || codec.includes('h265')) {
+                                        videoCodec = 'hevc';
+                                    } else {
+                                        videoCodec = codec || 'unknown';
+                                    }
+                                }
+
+                                let audioCodec = 'none';
+                                const audioTrack = info.audioTracks[0];
+                                if (audioTrack) {
+                                    const codec = audioTrack.codec || '';
+                                    if (codec.includes('mp4a')) {
+                                        audioCodec = 'aac';
+                                    } else {
+                                        audioCodec = codec || 'unknown';
+                                    }
+                                }
+
+                                resolve({
+                                    fileName: file.name,
+                                    format: format || 'mp4',
+                                    videoCodec: videoCodec,
+                                    audioCodec: audioCodec,
+                                    size: file.size
+                                });
+                                logStep(`✅ Parsed ${file.name} → format: ${format || 'mp4'}, video: ${videoCodec}, audio: ${audioCodec}`);
+                            };
+
+                            buffer.fileStart = 0;
+                            mp4boxfile.appendBuffer(buffer);
+                            mp4boxfile.flush();
+                        } catch (error) {
+                            reject(error);
+                        }
+                    };
+
+                    reader.onerror = () => reject(new Error('File read error'));
+                    reader.readAsArrayBuffer(file.slice(0, 1024 * 1024));
+                });
+            }
+        </script>
+    </body>
+    </html>
+    """
+
+    component_value = st.components.v1.html(html_code, height=420, scrolling=True)
+
+    if isinstance(component_value, dict):
+        metadata_from_component = component_value.get("metadata")
+        if metadata_from_component:
+            metadata_list = metadata_from_component
+
+        timeline_return = component_value.get("timeline")
+        if isinstance(timeline_return, list):
+            timeline_entries = timeline_return
+
+        payload_size_value = component_value.get("payloadSize")
+        if isinstance(payload_size_value, int):
+            payload_size = payload_size_value
+
+    if metadata_list:
+        st.write("---")
+        st.write("📊 **Processing Steps (Python):**")
+        st.write("1️⃣ Received metadata payload from browser component")
+        st.write(f"2️⃣ Payload size: {payload_size if payload_size is not None else 'unknown'} characters")
+        st.write(f"3️⃣ Preparing DataFrame with {len(metadata_list)} rows")
+        st.success(f"✅ Quick Check completed for {len(metadata_list)} files!")
+
+        valid_formats = ["mp4", "mov"]
+        valid_codecs = [
+            "h264",
+            "avc",
+            "hevc",
+            "h265",
+            "mpeg1video",
+            "mpeg2video",
+            "mpeg1",
+            "mpeg2",
+        ]
+
+        results = []
+        for item in metadata_list:
+            file_name = item.get("fileName", "unknown")
+            fmt_raw = item.get("format", "unknown")
+            fmt_lower = fmt_raw.lower() if isinstance(fmt_raw, str) else "unknown"
+            video_codec_raw = item.get("videoCodec", "unknown")
+            video_codec_lower = video_codec_raw.lower() if isinstance(video_codec_raw, str) else "unknown"
+            audio_codec = item.get("audioCodec", "unknown")
+            file_size_bytes = item.get("size", 0) or 0
+            file_size_mb = file_size_bytes / (1024 * 1024)
+
+            format_flag = "good to go" if fmt_lower in valid_formats else "error"
+            codec_flag = "good to go" if video_codec_lower in valid_codecs else "error"
+            size_flag = "good to go" if file_size_mb <= 200 else "error"
+
+            results.append(
+                {
+                    "File Name": file_name,
+                    "Video Format": fmt_raw,
+                    "Video Format Flag": format_flag,
+                    "Video Codecs": f"Video: {video_codec_raw}, Audio: {audio_codec}",
+                    "Video Codecs Flag": codec_flag,
+                    "File Size": f"{file_size_mb:.2f} MB",
+                    "File Size Flag": size_flag,
+                }
+            )
+
+        df = pd.DataFrame(results)
+        st.dataframe(df, width="stretch")
+
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Video Metadata")
+        processed_data = output.getvalue()
+
+        st.download_button(
+            label="📥 Download Excel Report",
+            data=processed_data,
+            file_name="video_metadata_quick_check.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        if timeline_entries:
+            st.write("---")
+            st.write("🕒 **Client Debug Timeline:**")
+            for entry in timeline_entries:
+                st.write(f"- {entry}")
+
+        if st.button("🔄 Analyze New Files"):
+            st.query_params.clear()
+            st.rerun()
+    else:
+        if timeline_entries:
+            st.write("---")
+            st.write("🕒 **Client Debug Timeline (latest run):**")
+            for entry in timeline_entries:
+                st.write(f"- {entry}")
+        st.info(
+            "Waiting for Quick Check results. After clicking Analyze the browser timeline above should end with either a bridge success message or a redirect attempt."
+        )
+
+
+def render_standard_upload():
+    """Handle the standard upload (server-side) workflow."""
+    st.warning("⚠️ Large files (10+) may cause timeout. For 10+ files, use Quick Check mode.")
+
+    uploaded_files = st.file_uploader(
+        "Choose video files",
+        accept_multiple_files=True,
+        type=["mp4", "mov", "avi", "mkv", "flv", "wmv", "webm", "m4v"],
+    )
+
+    if uploaded_files:
+        st.success(f"✅ {len(uploaded_files)} file(s) uploaded successfully!")
+
+        if st.button("Analyze Videos", type="primary"):
+            start_time = time.time()
+            st.info(f"Processing {len(uploaded_files)} files with ffprobe...")
+
+            results = []
+            progress_placeholder = st.empty()
+            status_placeholder = st.empty()
+
+            valid_formats = ["mp4", "mov"]
+            valid_codecs = [
+                "h264",
+                "avc",
+                "hevc",
+                "h265",
+                "mpeg1video",
+                "mpeg2video",
+                "mpeg1",
+                "mpeg2",
+            ]
+
+            for index, uploaded_file in enumerate(uploaded_files):
+                progress_placeholder.progress(index / len(uploaded_files))
+                status_placeholder.info(
+                    f"🔄 Processing file {index + 1} of {len(uploaded_files)}: {uploaded_file.name}"
+                )
+
+                with tempfile.NamedTemporaryFile(
+                    delete=False, suffix=os.path.splitext(uploaded_file.name)[1]
+                ) as tmp_file:
+                    shutil.copyfileobj(uploaded_file, tmp_file)
+                    temp_path = tmp_file.name
+
+                try:
+                    fmt, v_codec, a_codec = get_video_metadata(temp_path)
+
+                    format_flag = "good to go" if fmt.lower() in valid_formats else "error"
+                    codec_flag = "good to go" if v_codec.lower() in valid_codecs else "error"
+
+                    file_size_bytes = os.path.getsize(temp_path)
+                    file_size_mb = file_size_bytes / (1024 * 1024)
+                    size_flag = "good to go" if file_size_mb <= 200 else "error"
+
+                    results.append(
+                        {
+                            "File Name": uploaded_file.name,
+                            "Video Format": fmt,
+                            "Video Format Flag": format_flag,
+                            "Video Codecs": f"Video: {v_codec}, Audio: {a_codec}",
+                            "Video Codecs Flag": codec_flag,
+                            "File Size": f"{file_size_mb:.2f} MB",
+                            "File Size Flag": size_flag,
+                        }
+                    )
+                finally:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+
+            progress_placeholder.progress(1.0)
+            status_placeholder.empty()
+
+            elapsed_time = time.time() - start_time
+            df = pd.DataFrame(results)
+            st.success(f"✅ Standard Analysis Complete! Time taken: {elapsed_time:.2f} seconds")
+            st.dataframe(df, width="stretch")
+
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                df.to_excel(writer, index=False, sheet_name="Video Metadata")
+            processed_data = output.getvalue()
+
+            st.download_button(
+                label="📥 Download Excel Report",
+                data=processed_data,
+                file_name="video_metadata_upload_report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
 
 def main():
     st.set_page_config(page_title="Video Metadata Extractor", layout="wide")
-    
+
     st.title("🎥 Video Metadata Extractor")
     st.markdown("Analyze video files to extract format, codec details, and check file size.")
 
-    # Sidebar for Input Method
     input_method = st.sidebar.radio("Select Input Method:", ("Folder Path (Local)", "Upload Files"))
 
     if input_method == "Folder Path (Local)":
         st.subheader("📂 Local Folder Analysis")
-        # Instructions for users
         st.info(
             r"""
             **How to use:**
@@ -129,435 +597,76 @@ def main():
         if folder_path:
             if os.path.exists(folder_path) and os.path.isdir(folder_path):
                 if st.button("Analyze Videos"):
-                    video_extensions = ('.mp4', '.mov', '.avi', '.mkv', '.flv', '.wmv', '.webm', '.m4v')
-                    files = [f for f in os.listdir(folder_path) if f.lower().endswith(video_extensions)]
-                    
+                    video_extensions = (
+                        ".mp4",
+                        ".mov",
+                        ".avi",
+                        ".mkv",
+                        ".flv",
+                        ".wmv",
+                        ".webm",
+                        ".m4v",
+                    )
+                    files = [name for name in os.listdir(folder_path) if name.lower().endswith(video_extensions)]
+
                     if not files:
                         st.warning("No video files found in this directory.")
                     else:
                         st.info(f"Found {len(files)} video files. Processing...")
-                        file_paths = [os.path.join(folder_path, f) for f in files]
-                        
+                        file_paths = [os.path.join(folder_path, name) for name in files]
+
                         df = analyze_videos(file_paths)
-                        
                         st.success("Analysis Complete!")
                         st.dataframe(df, width="stretch")
-                        
-                        # Excel Export logic moved to reuse
+
                         output = BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            df.to_excel(writer, index=False, sheet_name='Video Metadata')
+                        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                            df.to_excel(writer, index=False, sheet_name="Video Metadata")
                         processed_data = output.getvalue()
-                        
+
                         st.download_button(
                             label="📥 Download Excel Report",
                             data=processed_data,
                             file_name="video_metadata_report.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         )
-
             else:
                 import platform
+
                 system_os = platform.system()
                 if system_os != "Windows" and (":\\" in folder_path or ":/" in folder_path):
-                    st.error(f"Invalid path. You seem to be using a Windows path (`{folder_path}`) but this application is running on {system_os}. Please use a valid path for this computer.")
+                    st.error(
+                        f"Invalid path. You seem to be using a Windows path (`{folder_path}`) but this application is running on {system_os}. Please use a valid path for this computer."
+                    )
                 elif system_os == "Windows" and folder_path.startswith("/"):
-                    st.error(f"Invalid path. You seem to be using a Unix/Mac path (`{folder_path}`) but this application is running on Windows. Please use a valid Windows path.")
+                    st.error(
+                        f"Invalid path. You seem to be using a Unix/Mac path (`{folder_path}`) but this application is running on Windows. Please use a valid Windows path."
+                    )
                 else:
-                    st.error(f"Invalid folder path: `{folder_path}`. Please verify the folder exists and is accessible.")
+                    st.error(
+                        f"Invalid folder path: `{folder_path}`. Please verify the folder exists and is accessible."
+                    )
 
     elif input_method == "Upload Files":
         st.subheader("📤 File Upload Analysis")
         st.markdown("Upload video files directly from your computer.")
-        
-        # Method selection FIRST (before upload)
+
         processing_method = st.radio(
             "⚙️ Select Analysis Method:",
             ("Standard Upload (Server-side)", "Quick Check (Client-side - Browser only)"),
-            help="**Standard**: Uploads files to server, full ffprobe analysis (accurate but slow for 10+ files).\n\n**Quick Check**: Files stay in your browser, instant metadata extraction (MP4/MOV only, avoids 502 timeout)."
+            help=(
+                "**Standard**: Uploads files to server, full ffprobe analysis (accurate but slow for 10+ files).\n\n"
+                "**Quick Check**: Files stay in your browser, instant metadata extraction (MP4/MOV only, avoids 502 timeout)."
+            ),
         )
-        
+
         st.markdown("---")
-        
+
         if processing_method == "Quick Check (Client-side - Browser only)":
-            st.info("🚀 Quick Check: Files analyzed in your browser without uploading. Works with MP4/MOV files.")
-            
-            # DEBUG: Show query params
-            st.write("🔍 **Debug Info:**")
-            all_params = dict(st.query_params)
-            st.write(f"All query params: {all_params}")
-            
-            # Check if we have results from query parameters
-            results_param = st.query_params.get("results")
-            st.write(f"Results param exists: {results_param is not None}")
-            
-            if results_param:
-                st.write(f"Results param length: {len(results_param)} characters")
-                st.write(f"First 100 chars: {results_param[:100]}...")
-                
-                # Decode results from URL
-                import json
-                import base64
-                try:
-                    st.write("⏳ Attempting to decode Base64...")
-                    decoded = base64.b64decode(results_param).decode('utf-8')
-                    st.write(f"✅ Decoded successfully! Length: {len(decoded)} chars")
-                    st.write(f"First 200 chars of JSON: {decoded[:200]}...")
-                    
-                    st.write("⏳ Parsing JSON...")
-                    metadata_list = json.loads(decoded)
-                    st.write(f"✅ JSON parsed! Got {len(metadata_list)} items")
-                    st.write(f"First item: {metadata_list[0] if metadata_list else 'None'}")
-                    
-                    st.write("---")
-                    st.write("📊 **Processing Steps (Python):**")
-                    st.write("1️⃣ Received Base64 metadata via query param")
-                    st.write("2️⃣ Decoded and parsed JSON successfully")
-                    st.write(f"3️⃣ Preparing DataFrame with {len(metadata_list)} rows")
-                    st.success(f"✅ Quick Check completed for {len(metadata_list)} files!")
-
-                    # Valid Formats and Codecs
-                    valid_formats = ['mp4', 'mov']
-                    valid_codecs = ['h264', 'avc', 'hevc', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2']
-                    
-                    results = []
-                    for item in metadata_list:
-                        file_name = item['fileName']
-                        fmt = item['format']
-                        v_codec = item['videoCodec']
-                        a_codec = item['audioCodec']
-                        file_size_bytes = item['size']
-                        file_size_mb = file_size_bytes / (1024 * 1024)
-                        
-                        # Validation
-                        format_flag = "good to go" if fmt.lower() in valid_formats else "error"
-                        codec_flag = "good to go" if v_codec.lower() in valid_codecs else "error"
-                        size_flag = "good to go" if file_size_mb <= 200 else "error"
-                        
-                        results.append({
-                            "File Name": file_name,
-                            "Video Format": fmt,
-                            "Video Format Flag": format_flag,
-                            "Video Codecs": f"Video: {v_codec}, Audio: {a_codec}",
-                            "Video Codecs Flag": codec_flag,
-                            "File Size": f"{file_size_mb:.2f} MB",
-                            "File Size Flag": size_flag
-                        })
-                    
-                    df = pd.DataFrame(results)
-                    st.dataframe(df, width="stretch")
-                    
-                    # Excel Export
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df.to_excel(writer, index=False, sheet_name='Video Metadata')
-                    processed_data = output.getvalue()
-                    
-                    st.download_button(
-                        label="📥 Download Excel Report",
-                        data=processed_data,
-                        file_name="video_metadata_quick_check.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                    
-                    # Button to analyze new files
-                    if st.button("🔄 Analyze New Files"):
-                        st.query_params.clear()
-                        st.rerun()
-                        
-                except Exception as e:
-                    st.error(f"Error decoding results: {e}")
-                    if st.button("Try Again"):
-                        st.query_params.clear()
-                        st.rerun()
-            
-            else:
-                st.write("---")
-                st.write("🧭 **Client-side Steps:**")
-                st.write("1️⃣ Choose MP4/MOV files using the picker below")
-                st.write("2️⃣ Click Analyze to run browser-side metadata extraction")
-                st.write("3️⃣ Watch the status bar for live progress")
-                st.write("4️⃣ After completion the page will refresh with results")
-
-                # Show the file picker component
-                html_code = """
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
-                    <style>
-                        body { font-family: sans-serif; padding: 10px; }
-                        #fileInput { margin: 10px 0; }
-                        #analyzeBtn { 
-                            background: #FF4B4B; 
-                            color: white; 
-                            padding: 8px 20px; 
-                            border: none; 
-                            border-radius: 4px; 
-                            cursor: pointer;
-                            margin-left: 10px;
-                        }
-                        #analyzeBtn:disabled { background: #ccc; }
-                        #status { margin-top: 10px; color: #0066cc; font-weight: 500; }
-                        #debugLog { 
-                            margin-top: 12px; 
-                            padding: 12px; 
-                            border: 1px solid #d0d7de; 
-                            border-radius: 6px; 
-                            background: #f6f8fa; 
-                            font-size: 13px;
-                            max-height: 200px;
-                            overflow-y: auto;
-                        }
-                        #debugLog div { margin-bottom: 6px; }
-                    </style>
-                </head>
-                <body>
-                    <input type="file" id="fileInput" multiple accept="video/*,.mp4,.mov,.m4v">
-                    <button id="analyzeBtn">Analyze</button>
-                    <div id="status"></div>
-                    <div id="debugLog"><strong>Debug Timeline</strong></div>
-                    
-                    <script>
-                        const fileInput = document.getElementById('fileInput');
-                        const analyzeBtn = document.getElementById('analyzeBtn');
-                        const status = document.getElementById('status');
-                        const debugLog = document.getElementById('debugLog');
-                        const TIMEOUT_MS = 5000;
-
-                        const logStep = (message) => {
-                            const entry = document.createElement('div');
-                            entry.textContent = message;
-                            debugLog.appendChild(entry);
-                        };
-                        
-                        analyzeBtn.addEventListener('click', async () => {
-                            const files = fileInput.files;
-                            if (files.length === 0) {
-                                alert('Please select video files first');
-                                return;
-                            }
-                            
-                            analyzeBtn.disabled = true;
-                            status.textContent = `Analyzing ${files.length} file(s)...`;
-                            logStep(`Selected ${files.length} file(s). Starting analysis...`);
-                            
-                            const metadata = [];
-                            
-                            for (let i = 0; i < files.length; i++) {
-                                const file = files[i];
-                                status.textContent = `Processing ${i + 1}/${files.length}: ${file.name}`;
-                                logStep(`Processing file ${i + 1}: ${file.name}`);
-                                
-                                try {
-                                    const data = await Promise.race([
-                                        analyzeFile(file),
-                                        timeout(TIMEOUT_MS)
-                                    ]);
-                                    metadata.push(data);
-                                } catch (error) {
-                                    console.error(`Error processing ${file.name}:`, error);
-                                    logStep(`⚠️ Error on ${file.name}: ${error.message}`);
-                                    metadata.push({
-                                        fileName: file.name,
-                                        format: 'error',
-                                        videoCodec: 'error',
-                                        audioCodec: error.message || 'timeout',
-                                        size: file.size
-                                    });
-                                }
-                            }
-                            
-                            // Encode results and redirect
-                            status.textContent = 'Complete! Redirecting...';
-                            logStep(`Analysis complete. Preparing ${metadata.length} result(s) for redirect.`);
-                            const jsonStr = JSON.stringify(metadata);
-                            const base64Data = btoa(jsonStr);
-                            logStep(`Encoded payload size: ${base64Data.length} characters.`);
-                            
-                            // Redirect to same page with results in query params
-                            const currentUrl = window.location.href.split('?')[0];
-                            window.location.href = currentUrl + '?results=' + encodeURIComponent(base64Data);
-                        });
-                        
-                        function timeout(ms) {
-                            return new Promise((_, reject) => 
-                                setTimeout(() => reject(new Error('Processing timeout')), ms)
-                            );
-                        }
-                        
-                        async function analyzeFile(file) {
-                            return new Promise((resolve, reject) => {
-                                const ext = file.name.split('.').pop().toLowerCase();
-                                
-                                // Non-MP4/MOV files
-                                if (!['mp4', 'mov', 'm4v'].includes(ext)) {
-                                    logStep(`Skipping ${file.name} (extension ${ext}) - treated as non-MP4.`);
-                                    resolve({
-                                        fileName: file.name,
-                                        format: ext,
-                                        videoCodec: 'N/A',
-                                        audioCodec: 'N/A',
-                                        size: file.size
-                                    });
-                                    return;
-                                }
-                                
-                                const reader = new FileReader();
-                                reader.onload = (e) => {
-                                    try {
-                                        const buffer = e.target.result;
-                                        const mp4boxfile = MP4Box.createFile();
-                                        let resolved = false;
-                                        
-                                        mp4boxfile.onError = (err) => {
-                                            if (!resolved) {
-                                                resolved = true;
-                                                logStep(`❌ MP4Box parse error on ${file.name}`);
-                                                reject(new Error('MP4Box parse error'));
-                                            }
-                                        };
-                                        
-                                        mp4boxfile.onReady = (info) => {
-                                            if (resolved) return;
-                                            resolved = true;
-                                            
-                                            // Extract format
-                                            let format = info.brand || 'mp4';
-                                            if (format.includes('qt')) format = 'mov';
-                                            else if (format.includes('mp4') || format.includes('isom')) format = 'mp4';
-                                            
-                                            // Extract video codec
-                                            let videoCodec = 'unknown';
-                                            const videoTrack = info.videoTracks[0];
-                                            if (videoTrack) {
-                                                const codec = videoTrack.codec;
-                                                if (codec.includes('avc') || codec.includes('h264')) videoCodec = 'h264';
-                                                else if (codec.includes('hvc') || codec.includes('hev') || codec.includes('h265')) videoCodec = 'hevc';
-                                                else videoCodec = codec;
-                                            }
-                                            
-                                            // Extract audio codec
-                                            let audioCodec = 'none';
-                                            const audioTrack = info.audioTracks[0];
-                                            if (audioTrack) {
-                                                const codec = audioTrack.codec;
-                                                if (codec.includes('mp4a')) audioCodec = 'aac';
-                                                else audioCodec = codec;
-                                            }
-                                            
-                                            resolve({
-                                                fileName: file.name,
-                                                format: format,
-                                                videoCodec: videoCodec,
-                                                audioCodec: audioCodec,
-                                                size: file.size
-                                            });
-                                            logStep(`✅ Parsed ${file.name} → format: ${format}, video: ${videoCodec}, audio: ${audioCodec}`);
-                                        };
-                                        
-                                        buffer.fileStart = 0;
-                                        mp4boxfile.appendBuffer(buffer);
-                                        mp4boxfile.flush();
-                                        
-                                    } catch (error) {
-                                        reject(error);
-                                    }
-                                };
-                                
-                                reader.onerror = () => reject(new Error('File read error'));
-                                reader.readAsArrayBuffer(file.slice(0, 1024 * 1024));
-                            });
-                        }
-                    </script>
-                </body>
-                </html>
-                """
-                
-                st.components.v1.html(html_code, height=120, scrolling=False)
-        
+            render_quick_check()
         else:
-            # Standard Upload Mode - uses Streamlit's uploader
-            st.info("📤 **Standard Mode**: Files will be uploaded to server for full ffprobe analysis")
-            st.warning("⚠️ Large files (10+) may cause timeout. For 10+ files, use Quick Check mode.")
-            
-            uploaded_files = st.file_uploader("Choose video files", accept_multiple_files=True, type=['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'webm', 'm4v'])
-            
-            if uploaded_files:
-                st.success(f"✅ {len(uploaded_files)} file(s) uploaded successfully!")
-                
-                if st.button("Analyze Videos", type="primary"):
-                    start_time = time.time()
-                    st.info(f"Processing {len(uploaded_files)} files with ffprobe...")
-                    
-                    # SEQUENTIAL PROCESSING (Safe for large files)
-                    results = []
-                    progress_placeholder = st.empty()
-                    status_placeholder = st.empty()
-                    
-                    # Valid Formats and Codecs
-                    valid_formats = ['mp4', 'mov']
-                    valid_codecs = ['h264', 'avc', 'hevc', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2']
-                    
-                    for idx, uploaded_file in enumerate(uploaded_files):
-                        # Update progress
-                        progress_placeholder.progress((idx) / len(uploaded_files))
-                        status_placeholder.info(f"🔄 Processing file {idx + 1} of {len(uploaded_files)}: {uploaded_file.name}")
-                        
-                        # Process ONE file at a time
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
-                            # Save to disk
-                            shutil.copyfileobj(uploaded_file, tmp)
-                            tmp_path = tmp.name
-                        
-                        try:
-                            # Analyze this file
-                            fmt, v_codec, a_codec = get_video_metadata(tmp_path)
-                            
-                            # Validation
-                            format_flag = "good to go" if fmt.lower() in valid_formats else "error"
-                            codec_flag = "good to go" if v_codec.lower() in valid_codecs else "error"
-                            
-                            file_size_bytes = os.path.getsize(tmp_path)
-                            file_size_mb = file_size_bytes / (1024 * 1024)
-                            size_flag = "good to go" if file_size_mb <= 200 else "error"
-                            
-                            results.append({
-                                "File Name": uploaded_file.name,
-                                "Video Format": fmt,
-                                "Video Format Flag": format_flag,
-                                "Video Codecs": f"Video: {v_codec}, Audio: {a_codec}",
-                                "Video Codecs Flag": codec_flag,
-                                "File Size": f"{file_size_mb:.2f} MB",
-                                "File Size Flag": size_flag
-                            })
-                        finally:
-                            # Delete immediately after processing
-                            if os.path.exists(tmp_path):
-                                os.remove(tmp_path)
-                    
-                    # Complete progress
-                    progress_placeholder.progress(1.0)
-                    status_placeholder.empty()
-                    
-                    elapsed_time = time.time() - start_time
-                    
-                    df = pd.DataFrame(results)
-                    st.success(f"✅ Standard Analysis Complete! Time taken: {elapsed_time:.2f} seconds")
-                    st.dataframe(df, width="stretch")
-                    
-                    # Excel Export
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df.to_excel(writer, index=False, sheet_name='Video Metadata')
-                    processed_data = output.getvalue()
-                    
-                    st.download_button(
-                        label="📥 Download Excel Report",
-                        data=processed_data,
-                        file_name="video_metadata_upload_report.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+            render_standard_upload()
+
 
 if __name__ == "__main__":
     main()
