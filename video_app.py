@@ -1,5 +1,6 @@
 import os
 import json
+import base64
 import shutil
 import tempfile
 import time
@@ -105,8 +106,6 @@ def render_quick_check():
     payload_size = None
 
     if results_param:
-        import base64
-
         try:
             st.write(f"Results param length: {len(results_param)} characters")
             st.write(f"First 100 chars: {results_param[:100]}...")
@@ -249,18 +248,37 @@ def render_quick_check():
                 const encodedPayload = btoa(jsonStr);
                 logStep(`Encoded payload size (base64): ${encodedPayload.length} characters.`);
 
-                logStep('Attempting parent redirect with payload...');
+                const Streamlit = getStreamlit();
+                if (Streamlit && Streamlit.setComponentValue) {
+                    logStep('Sending results to Streamlit parent via component bridge...');
+                    Streamlit.setComponentValue({
+                        metadata: metadata,
+                        timeline: timelineEntries,
+                        payloadSize: encodedPayload.length
+                    });
+                    status.textContent = 'Results sent to Streamlit.';
+                    analyzeBtn.disabled = false;
+                    updateFrameHeight();
+                    return;
+                }
+
+                logStep('Component bridge unavailable. Attempting parent redirect with payload...');
                 const parentWindow = window.parent;
                 if (parentWindow && parentWindow.location) {
                     try {
                         const baseUrl = parentWindow.location.href.split('?')[0];
                         parentWindow.location.href = baseUrl + '?results=' + encodeURIComponent(encodedPayload);
                         logStep('Parent redirect triggered.');
+                        status.textContent = 'Redirecting with results...';
                     } catch (redirectError) {
                         logStep(`❌ Redirect blocked: ${redirectError.message}`);
+                        analyzeBtn.disabled = false;
+                        status.textContent = 'Redirect blocked. See timeline.';
                     }
                 } else {
                     logStep('❌ Unable to access parent window. Please open Quick Check in a new tab.');
+                    analyzeBtn.disabled = false;
+                    status.textContent = 'Unable to reach parent window.';
                 }
             });
 
@@ -408,7 +426,20 @@ def render_quick_check():
     </html>
     """
 
-    st.components.v1.html(html_code, height=420, scrolling=True)
+    component_value = st.components.v1.html(html_code, height=420, scrolling=True)
+
+    if isinstance(component_value, dict):
+        metadata_from_component = component_value.get("metadata")
+        if isinstance(metadata_from_component, list) and metadata_from_component:
+            metadata_list = metadata_from_component
+
+        timeline_from_component = component_value.get("timeline")
+        if isinstance(timeline_from_component, list) and timeline_from_component:
+            timeline_entries = timeline_from_component
+
+        payload_size_value = component_value.get("payloadSize")
+        if isinstance(payload_size_value, int):
+            payload_size = payload_size_value
 
     if metadata_list:
         st.write("---")
