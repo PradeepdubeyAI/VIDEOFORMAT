@@ -239,46 +239,58 @@ def render_quick_check():
                 status.textContent = 'Complete! Returning results...';
                 logStep(`Analysis complete. Preparing ${metadata.length} result(s) for return.`);
 
-                const payload = {
-                    metadata: metadata,
-                    timeline: timelineEntries
-                };
-
-                const jsonStr = JSON.stringify(payload);
-                const encodedPayload = btoa(jsonStr);
-                logStep(`Encoded payload size (base64): ${encodedPayload.length} characters.`);
-
-                const Streamlit = getStreamlit();
-                if (Streamlit && Streamlit.setComponentValue) {
-                    logStep('Sending results to Streamlit parent via component bridge...');
-                    Streamlit.setComponentValue({
+                try {
+                    logStep('Building payload object...');
+                    const payload = {
                         metadata: metadata,
-                        timeline: timelineEntries,
-                        payloadSize: encodedPayload.length
-                    });
-                    status.textContent = 'Results sent to Streamlit.';
-                    analyzeBtn.disabled = false;
-                    updateFrameHeight();
-                    return;
-                }
+                        timeline: timelineEntries
+                    };
 
-                logStep('Component bridge unavailable. Attempting parent redirect with payload...');
-                const parentWindow = window.parent;
-                if (parentWindow && parentWindow.location) {
-                    try {
-                        const baseUrl = parentWindow.location.href.split('?')[0];
-                        parentWindow.location.href = baseUrl + '?results=' + encodeURIComponent(encodedPayload);
-                        logStep('Parent redirect triggered.');
-                        status.textContent = 'Redirecting with results...';
-                    } catch (redirectError) {
-                        logStep(`❌ Redirect blocked: ${redirectError.message}`);
+                    logStep('Stringifying payload...');
+                    const jsonStr = JSON.stringify(payload);
+                    logStep(`JSON string length: ${jsonStr.length} characters.`);
+
+                    logStep('Base64 encoding...');
+                    const encodedPayload = btoa(jsonStr);
+                    logStep(`Encoded payload size (base64): ${encodedPayload.length} characters.`);
+
+                    const Streamlit = getStreamlit();
+                    if (Streamlit && Streamlit.setComponentValue) {
+                        logStep('Sending results to Streamlit parent via component bridge...');
+                        Streamlit.setComponentValue({
+                            metadata: metadata,
+                            timeline: timelineEntries,
+                            payloadSize: encodedPayload.length
+                        });
+                        status.textContent = 'Results sent to Streamlit.';
                         analyzeBtn.disabled = false;
-                        status.textContent = 'Redirect blocked. See timeline.';
+                        updateFrameHeight();
+                        return;
                     }
-                } else {
-                    logStep('❌ Unable to access parent window. Please open Quick Check in a new tab.');
+
+                    logStep('Component bridge unavailable. Attempting parent redirect with payload...');
+                    const parentWindow = window.parent;
+                    if (parentWindow && parentWindow.location) {
+                        try {
+                            const baseUrl = parentWindow.location.href.split('?')[0];
+                            parentWindow.location.href = baseUrl + '?results=' + encodeURIComponent(encodedPayload);
+                            logStep('Parent redirect triggered.');
+                            status.textContent = 'Redirecting with results...';
+                        } catch (redirectError) {
+                            logStep(`❌ Redirect blocked: ${redirectError.message}`);
+                            analyzeBtn.disabled = false;
+                            status.textContent = 'Redirect blocked. See timeline.';
+                        }
+                    } else {
+                        logStep('❌ Unable to access parent window. Please open Quick Check in a new tab.');
+                        analyzeBtn.disabled = false;
+                        status.textContent = 'Unable to reach parent window.';
+                    }
+                } catch (encodingError) {
+                    logStep(`❌ Error encoding results: ${encodingError.message}`);
+                    console.error('Encoding error details:', encodingError);
+                    status.textContent = 'Error encoding results. Check console.';
                     analyzeBtn.disabled = false;
-                    status.textContent = 'Unable to reach parent window.';
                 }
             });
 
