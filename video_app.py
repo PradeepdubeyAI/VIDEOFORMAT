@@ -226,6 +226,10 @@ def render_quick_check():
             let streamlitBridge = null;
             let bridgePollAttempts = 0;
             const BRIDGE_POLL_MAX = 40;
+            let readyAnnounceCount = 0;
+            let readyAnnounceInterval = null;
+            let readyAnnounceErrorLogged = false;
+            let frameResizeErrorLogged = false;
 
             const logStep = (message) => {
                 timelineEntries.push(message);
@@ -240,7 +244,12 @@ def render_quick_check():
                     return false;
                 }
                 try {
-                    window.parent.postMessage({ type, id: streamlitId, ...data }, '*');
+                    window.parent.postMessage({
+                        isStreamlitMessage: true,
+                        type,
+                        id: streamlitId,
+                        ...data
+                    }, '*');
                     return true;
                 } catch (error) {
                     if (!postMessageErrorLogged) {
@@ -258,6 +267,19 @@ def render_quick_check():
                 }
                 if (streamlitId !== null) {
                     postToStreamlit('streamlit:setFrameHeight', { height: document.body.scrollHeight });
+                } else {
+                    try {
+                        window.parent.postMessage({
+                            isStreamlitMessage: true,
+                            type: 'streamlit:setFrameHeight',
+                            height: document.body.scrollHeight
+                        }, '*');
+                    } catch (error) {
+                        if (!frameResizeErrorLogged) {
+                            frameResizeErrorLogged = true;
+                            logStep(`⚠️ Unable to request frame resize: ${error.message}`);
+                        }
+                    }
                 }
             };
 
@@ -266,6 +288,25 @@ def render_quick_check():
                     streamlitBridge.setComponentReady();
                 } else {
                     postToStreamlit('streamlit:setComponentReady');
+                }
+            };
+
+            const announceComponentReady = (withLog = false) => {
+                try {
+                    window.parent.postMessage({
+                        isStreamlitMessage: true,
+                        type: 'streamlit:componentReady',
+                        apiVersion: 1
+                    }, '*');
+                    readyAnnounceCount += 1;
+                    if (withLog) {
+                        logStep('Notified Streamlit parent that component is ready.');
+                    }
+                } catch (error) {
+                    if (withLog && !readyAnnounceErrorLogged) {
+                        readyAnnounceErrorLogged = true;
+                        logStep(`⚠️ Failed to notify parent: ${error.message}`);
+                    }
                 }
             };
 
@@ -290,9 +331,16 @@ def render_quick_check():
                 if (!data || !data.type) {
                     return;
                 }
+                if (data.isStreamlitMessage === false) {
+                    return;
+                }
                 if (data.type === 'streamlit:render') {
                     streamlitId = data.id;
                     logStep(`✅ Connected to Streamlit (component id: ${streamlitId}).`);
+                    if (readyAnnounceInterval) {
+                        clearInterval(readyAnnounceInterval);
+                        readyAnnounceInterval = null;
+                    }
                     if (data.args && Object.keys(data.args).length > 0) {
                         logStep(`Received args: ${JSON.stringify(data.args)}`);
                     }
@@ -339,6 +387,22 @@ def render_quick_check():
                 logStep('Component loaded. Waiting for Streamlit render event...');
                 pollStreamlitBridge();
                 updateFrameHeight();
+                announceComponentReady(true);
+                if (!readyAnnounceInterval) {
+                    readyAnnounceInterval = setInterval(() => {
+                        if (streamlitId !== null) {
+                            clearInterval(readyAnnounceInterval);
+                            readyAnnounceInterval = null;
+                            return;
+                        }
+                        announceComponentReady(false);
+                        if (readyAnnounceCount >= 10) {
+                            clearInterval(readyAnnounceInterval);
+                            readyAnnounceInterval = null;
+                            logStep('⚠️ No Streamlit response after announcing readiness multiple times.');
+                        }
+                    }, 1500);
+                }
             });
 
             const renderLocalResults = (rows) => {
@@ -648,7 +712,10 @@ def render_quick_check():
         html_code,
         height=520,
         scrolling=True,
-        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox",
+        sandbox=(
+            "allow-scripts allow-same-origin allow-popups "
+            "allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
+        ),
     )
 
     if isinstance(component_value, dict):
