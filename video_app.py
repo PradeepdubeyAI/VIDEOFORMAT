@@ -2,12 +2,10 @@ import streamlit as st
 import os
 import pandas as pd
 import ffmpeg
-import json
 import tempfile
 import shutil
 import time
 from io import BytesIO
-import streamlit.components.v1 as components
 
 def get_video_metadata(file_path):
     """
@@ -179,151 +177,49 @@ def main():
         )
         
         if analysis_tab == "🚀 Quick Check (Format & Size Only - No Upload)":
-            st.info("💡 **How it works:** Validates format and file size instantly in your browser. For codec validation, use Full Analysis.")
-            st.warning("⚠️ **Limitation:** Browser cannot detect video codecs. Only format (mp4/mov) and file size are validated.")
+            st.info("💡 **Quick Check:** Validates format and file size instantly without uploading videos. Codec validation not available in this mode.")
             
-            # HTML component for browser-based file info extraction
-            html_component = """
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.0.0/dist/streamlit-component-lib.js"></script>
-                <style>
-                    body { font-family: sans-serif; padding: 20px; }
-                    .upload-box { border: 2px dashed #ccc; padding: 40px; text-align: center; margin: 20px 0; border-radius: 10px; }
-                    .upload-box:hover { border-color: #4CAF50; background: #f9f9f9; }
-                    #fileInput { margin: 20px 0; }
-                    .progress { margin: 10px 0; }
-                    .result { background: #e8f5e9; padding: 10px; margin: 5px 0; border-radius: 5px; }
-                    button { background: #4CAF50; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 5px; cursor: pointer; }
-                    button:hover { background: #45a049; }
-                    button:disabled { background: #ccc; cursor: not-allowed; }
-                </style>
-            </head>
-            <body>
-                <div class="upload-box">
-                    <h3>📂 Select Video Files</h3>
-                    <input type="file" id="fileInput" multiple accept="video/*" style="display:none">
-                    <button onclick="document.getElementById('fileInput').click()">Choose Videos</button>
-                    <p id="fileCount" style="margin-top: 10px; color: #666;"></p>
-                </div>
-                <button id="analyzeBtn" onclick="analyzeVideos()" disabled>Analyze Videos</button>
-                <div id="progress"></div>
-                <div id="results"></div>
-
-                <script>
-                    let selectedFiles = [];
-                    const Streamlit = window.parent.Streamlit;
-                    
-                    document.getElementById('fileInput').addEventListener('change', function(e) {
-                        selectedFiles = Array.from(e.target.files);
-                        document.getElementById('fileCount').textContent = 
-                            selectedFiles.length > 0 ? `${selectedFiles.length} file(s) selected` : '';
-                        document.getElementById('analyzeBtn').disabled = selectedFiles.length === 0;
-                    });
-
-                    async function getVideoInfo(file) {
-                        return new Promise((resolve) => {
-                            // Get basic file info (always fast and reliable)
-                            const ext = file.name.split('.').pop().toLowerCase();
-                            
-                            const basicInfo = {
-                                fileName: file.name,
-                                fileSize: file.size,
-                                fileSizeMB: (file.size / (1024 * 1024)).toFixed(2),
-                                format: ext,
-                                videoCodec: 'unknown',  // Browser can't reliably detect codec without upload
-                                audioCodec: 'unknown'
-                            };
-                            
-                            // Immediately resolve with basic info
-                            resolve(basicInfo);
-                        });
-                    }
-
-                    async function analyzeVideos() {
-                        const progressDiv = document.getElementById('progress');
-                        const resultsDiv = document.getElementById('results');
-                        const analyzeBtn = document.getElementById('analyzeBtn');
-                        
-                        analyzeBtn.disabled = true;
-                        resultsDiv.innerHTML = '';
-                        progressDiv.innerHTML = '<p>🔄 Analyzing videos...</p>';
-                        
-                        const results = [];
-                        
-                        for (let i = 0; i < selectedFiles.length; i++) {
-                            const file = selectedFiles[i];
-                            progressDiv.innerHTML = `<p>🔄 Processing ${i + 1} of ${selectedFiles.length}: ${file.name}</p>`;
-                            
-                            const info = await getVideoInfo(file);
-                            results.push(info);
-                        }
-                        
-                        progressDiv.innerHTML = '<p>✅ Analysis complete! Sending results...</p>';
-                        
-                        // Send results to Streamlit
-                        if (window.parent.Streamlit) {
-                            window.parent.Streamlit.setComponentValue(JSON.stringify(results));
-                        } else {
-                            window.parent.postMessage({
-                                type: 'streamlit:setComponentValue',
-                                value: JSON.stringify(results)
-                            }, '*');
-                        }
-                        
-                        resultsDiv.innerHTML = `<div class="result">✅ Successfully analyzed ${results.length} files. Results sent to server for validation.</div>`;
-                        analyzeBtn.disabled = false;
-                    }
-                </script>
-            </body>
-            </html>
-            """
+            uploaded_files = st.file_uploader("Choose video files", accept_multiple_files=True, type=['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'webm', 'm4v'], key="quick_check")
             
-            # Render the component (simplified call)
-            component_value = components.html(html_component, height=400)
-            
-            # Process results when received from JavaScript
-            if component_value and isinstance(component_value, str):
-                try:
-                    metadata_list = json.loads(component_value)
-                    st.success(f"✅ Received metadata for {len(metadata_list)} files!")
+            if uploaded_files:
+                st.success(f"✅ {len(uploaded_files)} file(s) loaded!")
+                
+                if st.button("Quick Check - Analyze Format & Size", key="quick_analyze"):
+                    st.info(f"Analyzing {len(uploaded_files)} files...")
                     
-                    st.info("ℹ️ **Note:** Browser analysis validates format and size. Codec validation requires file upload (use Legacy method if needed).")
-                    
-                    # Valid Formats and Codecs
+                    # Valid Formats
                     valid_formats = ['mp4', 'mov', 'm4v']
-                    valid_codecs = ['h264', 'avc', 'avc1', 'hevc', 'hvc1', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2', 'mp4v']
                     
                     results = []
-                    for meta in metadata_list:
-                        fmt = meta.get('format', 'unknown')
-                        v_codec = meta.get('videoCodec', 'unknown')
-                        a_codec = meta.get('audioCodec', 'none')
-                        file_size_mb = float(meta.get('fileSizeMB', 0))
+                    progress_bar = st.progress(0)
+                    
+                    for idx, uploaded_file in enumerate(uploaded_files):
+                        # Get basic info without saving file
+                        file_name = uploaded_file.name
+                        file_size_bytes = uploaded_file.size
+                        file_size_mb = file_size_bytes / (1024 * 1024)
                         
-                        # Validation logic
-                        format_flag = "good to go" if fmt.lower() in valid_formats else "error"
+                        # Extract format from extension
+                        ext = file_name.split('.')[-1].lower() if '.' in file_name else 'unknown'
                         
-                        # Skip codec validation if unknown (browser limitation)
-                        if v_codec.lower() == 'unknown':
-                            codec_flag = "unable to detect (browser limitation)"
-                        else:
-                            codec_flag = "good to go" if any(vc in v_codec.lower() for vc in valid_codecs) else "error"
-                        
+                        # Validation
+                        format_flag = "good to go" if ext in valid_formats else "error"
                         size_flag = "good to go" if file_size_mb <= 200 else "error"
                         
                         results.append({
-                            "File Name": meta.get('fileName', 'unknown'),
-                            "Video Format": fmt,
+                            "File Name": file_name,
+                            "Video Format": ext,
                             "Video Format Flag": format_flag,
-                            "Video Codecs": f"Video: {v_codec}, Audio: {a_codec}",
-                            "Video Codecs Flag": codec_flag,
-                            "File Size": f"{file_size_mb} MB",
+                            "Video Codecs": "Not checked (Quick Check mode)",
+                            "Video Codecs Flag": "not validated",
+                            "File Size": f"{file_size_mb:.2f} MB",
                             "File Size Flag": size_flag
                         })
+                        
+                        progress_bar.progress((idx + 1) / len(uploaded_files))
                     
                     df = pd.DataFrame(results)
+                    st.success(f"✅ Quick Check Complete!")
                     st.dataframe(df, width="stretch")
                     
                     # Excel Export
@@ -335,11 +231,9 @@ def main():
                     st.download_button(
                         label="📥 Download Excel Report",
                         data=processed_data,
-                        file_name="video_metadata_browser_analysis.xlsx",
+                        file_name="video_quickcheck_report.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
-                except Exception as e:
-                    st.error(f"Error processing metadata: {str(e)}")
         
         else:  # Full Analysis (Upload method)
             st.info("📊 **Full validation:** Checks format, codecs (h264/hevc/mpeg), and file size.")
