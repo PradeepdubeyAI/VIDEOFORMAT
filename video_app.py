@@ -275,23 +275,45 @@ def render_quick_check():
             };
 
             window.addEventListener('load', () => {
+                console.log('Quick Check component loaded');
                 const Streamlit = getStreamlit();
                 if (Streamlit && Streamlit.setComponentReady) {
                     Streamlit.setComponentReady();
+                    console.log('Streamlit component ready');
                 }
                 updateFrameHeight();
+                console.log('Event listeners attached, ready for user interaction');
+            });
+
+            fileInput.addEventListener('change', () => {
+                const count = fileInput.files.length;
+                if (count > 0) {
+                    status.textContent = `${count} file(s) selected. Click Analyze to process.`;
+                    console.log(`User selected ${count} files`);
+                } else {
+                    status.textContent = '';
+                }
             });
 
             analyzeBtn.addEventListener('click', async () => {
-                const files = fileInput.files;
-                if (files.length === 0) {
-                    alert('Please select video files first');
-                    return;
-                }
+                try {
+                    console.log('Analyze button clicked');
+                    const files = fileInput.files;
+                    console.log(`Files selected: ${files.length}`);
+                    
+                    if (files.length === 0) {
+                        alert('Please select video files first');
+                        return;
+                    }
 
-                analyzeBtn.disabled = true;
-                status.textContent = `Analyzing ${files.length} file(s)...`;
-                logStep(`Selected ${files.length} file(s). Starting analysis...`);
+                    if (analyzeBtn.disabled) {
+                        console.log('Button already processing, ignoring click');
+                        return;
+                    }
+
+                    analyzeBtn.disabled = true;
+                    status.textContent = `Analyzing ${files.length} file(s)...`;
+                    logStep(`Selected ${files.length} file(s). Starting analysis...`);
 
                 const metadata = [];
 
@@ -362,6 +384,13 @@ def render_quick_check():
                     console.error('Encoding error details:', encodingError);
                     status.textContent = 'Error encoding results. Check console.';
                     analyzeBtn.disabled = false;
+                }
+                } catch (outerError) {
+                    console.error('Unexpected error in analyze handler:', outerError);
+                    logStep(`❌ Unexpected error: ${outerError.message}`);
+                    status.textContent = 'An error occurred. Check console and timeline.';
+                    analyzeBtn.disabled = false;
+                    updateFrameHeight();
                 }
             });
 
