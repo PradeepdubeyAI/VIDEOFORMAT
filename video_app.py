@@ -160,6 +160,13 @@ def render_quick_check():
                 overflow-y: auto;
             }
             #debugLog div { margin-bottom: 6px; }
+            #resultsSection { margin-top: 20px; display: none; }
+            #resultsTable { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+            #resultsTable th, #resultsTable td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            #resultsTable th { background-color: #FF4B4B; color: white; }
+            .flag-good { color: green; font-weight: bold; }
+            .flag-error { color: red; font-weight: bold; }
+            #downloadBtn { background: #28a745; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-top: 10px; }
         </style>
     </head>
     <body>
@@ -167,6 +174,11 @@ def render_quick_check():
         <button id="analyzeBtn">Analyze</button>
         <div id="status"></div>
         <div id="debugLog"><strong>Debug Timeline</strong></div>
+        <div id="resultsSection">
+            <h3>📊 Quick Check Results</h3>
+            <table id="resultsTable"></table>
+            <button id="downloadBtn">📥 Download CSV</button>
+        </div>
 
         <script>
             const getStreamlit = () => (window.parent && window.parent.Streamlit) ? window.parent.Streamlit : null;
@@ -178,6 +190,74 @@ def render_quick_check():
             const TIMEOUT_MS = 45000;
             const CHUNK_SIZE = 4 * 1024 * 1024;
             const toMb = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
+
+            function displayResultsInline(metadata) {
+                const resultsSection = document.getElementById('resultsSection');
+                const resultsTable = document.getElementById('resultsTable');
+                const downloadBtn = document.getElementById('downloadBtn');
+                
+                const validFormats = ['mp4', 'mov'];
+                const validCodecs = ['h264', 'avc', 'hevc', 'h265'];
+                
+                let tableHTML = `
+                    <thead>
+                        <tr>
+                            <th>File Name</th>
+                            <th>Format</th>
+                            <th>Format Flag</th>
+                            <th>Video Codec</th>
+                            <th>Audio Codec</th>
+                            <th>Codec Flag</th>
+                            <th>Size (MB)</th>
+                            <th>Size Flag</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                `;
+                
+                metadata.forEach(item => {
+                    const sizeMB = toMb(item.size);
+                    const formatFlag = validFormats.includes(item.format.toLowerCase()) ? 'good to go' : 'error';
+                    const codecFlag = validCodecs.includes(item.videoCodec.toLowerCase()) ? 'good to go' : 'error';
+                    const sizeFlag = parseFloat(sizeMB) <= 200 ? 'good to go' : 'error';
+                    
+                    tableHTML += `
+                        <tr>
+                            <td>${item.fileName}</td>
+                            <td>${item.format}</td>
+                            <td class="flag-${formatFlag.replace(' ', '-')}">${formatFlag}</td>
+                            <td>${item.videoCodec}</td>
+                            <td>${item.audioCodec}</td>
+                            <td class="flag-${codecFlag.replace(' ', '-')}">${codecFlag}</td>
+                            <td>${sizeMB}</td>
+                            <td class="flag-${sizeFlag.replace(' ', '-')}">${sizeFlag}</td>
+                        </tr>
+                    `;
+                });
+                
+                tableHTML += '</tbody>';
+                resultsTable.innerHTML = tableHTML;
+                resultsSection.style.display = 'block';
+                
+                downloadBtn.onclick = () => {
+                    let csv = 'File Name,Video Format,Video Format Flag,Video Codec,Audio Codec,Video Codecs Flag,File Size (MB),File Size Flag\n';
+                    metadata.forEach(item => {
+                        const sizeMB = toMb(item.size);
+                        const formatFlag = validFormats.includes(item.format.toLowerCase()) ? 'good to go' : 'error';
+                        const codecFlag = validCodecs.includes(item.videoCodec.toLowerCase()) ? 'good to go' : 'error';
+                        const sizeFlag = parseFloat(sizeMB) <= 200 ? 'good to go' : 'error';
+                        csv += `"${item.fileName}",${item.format},${formatFlag},${item.videoCodec},${item.audioCodec},${codecFlag},${sizeMB},${sizeFlag}\n`;
+                    });
+                    
+                    const blob = new Blob([csv], { type: 'text/csv' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'video_metadata_quick_check.csv';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                };
+            }
 
             const updateFrameHeight = () => {
                 const Streamlit = getStreamlit();
@@ -272,24 +352,11 @@ def render_quick_check():
                         return;
                     }
 
-                    logStep('Component bridge unavailable. Attempting parent redirect with payload...');
-                    const parentWindow = window.parent;
-                    if (parentWindow && parentWindow.location) {
-                        try {
-                            const baseUrl = parentWindow.location.href.split('?')[0];
-                            parentWindow.location.href = baseUrl + '?results=' + encodeURIComponent(encodedPayload);
-                            logStep('Parent redirect triggered.');
-                            status.textContent = 'Redirecting with results...';
-                        } catch (redirectError) {
-                            logStep(`❌ Redirect blocked: ${redirectError.message}`);
-                            analyzeBtn.disabled = false;
-                            status.textContent = 'Redirect blocked. See timeline.';
-                        }
-                    } else {
-                        logStep('❌ Unable to access parent window. Please open Quick Check in a new tab.');
-                        analyzeBtn.disabled = false;
-                        status.textContent = 'Unable to reach parent window.';
-                    }
+                    logStep('Component bridge unavailable. Displaying results inline...');
+                    displayResultsInline(metadata);
+                    status.textContent = 'Results displayed below. Download CSV to export.';
+                    analyzeBtn.disabled = false;
+                    updateFrameHeight();
                 } catch (encodingError) {
                     logStep(`❌ Error encoding results: ${encodingError.message}`);
                     console.error('Encoding error details:', encodingError);
@@ -442,7 +509,7 @@ def render_quick_check():
     </html>
     """
 
-    component_value = st.components.v1.html(html_code, height=420, scrolling=True)
+    component_value = st.components.v1.html(html_code, height=800, scrolling=True)
 
     if isinstance(component_value, dict):
         metadata_from_component = component_value.get("metadata")
