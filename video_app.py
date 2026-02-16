@@ -170,132 +170,84 @@ def main():
         st.subheader("📤 File Upload Analysis")
         st.markdown("Upload video files directly from your computer.")
         
-        # Version indicator
-        st.caption("🔄 App Version: 2.0 (Sequential Processing Enabled)")
-        
         uploaded_files = st.file_uploader("Choose video files", accept_multiple_files=True, type=['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'webm', 'm4v'])
 
         if uploaded_files:
-            # Add processing method selection
-            st.success(f"✅ {len(uploaded_files)} file(s) uploaded successfully! Choose processing method below:")
-            st.markdown("---")
-            processing_method = st.radio(
-                "⚙️ Select Processing Method:",
-                ("Batch Processing (Current)", "Sequential Processing (Recommended)"),
-                help="Batch: Process all files together. Sequential: Process one file at a time (safer for large files)."
-            )
+            st.success(f"✅ {len(uploaded_files)} file(s) uploaded successfully!")
             
             if st.button("Analyze Uploaded Videos"):
                 start_time = time.time()
-                st.info(f"Processing {len(uploaded_files)} files using {processing_method}...")
+                st.info(f"Processing {len(uploaded_files)} files...")
                 
-                if processing_method == "Batch Processing (Current)":
-                    # BATCH PROCESSING (Original Method)
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        temp_file_paths = []
-                        original_names = []
-                        
-                        for uploaded_file in uploaded_files:
-                            # Save each file to temp dir (streaming to avoid memory spike)
-                            temp_path = os.path.join(temp_dir, uploaded_file.name)
-                            with open(temp_path, "wb") as f:
-                                shutil.copyfileobj(uploaded_file, f)
-                            
-                            temp_file_paths.append(temp_path)
-                            original_names.append(uploaded_file.name)
-                        
-                        # Analyze all at once
-                        df = analyze_videos(temp_file_paths, original_names)
-                        
-                        end_time = time.time()
-                        elapsed_time = end_time - start_time
-                        
-                        st.success(f"✅ Analysis Complete! Time taken: {elapsed_time:.2f} seconds")
-                        st.dataframe(df, width="stretch")
-                        
-                        # Excel Export
-                        output = BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            df.to_excel(writer, index=False, sheet_name='Video Metadata')
-                        processed_data = output.getvalue()
-                        
-                        st.download_button(
-                            label="📥 Download Excel Report",
-                            data=processed_data,
-                            file_name="video_metadata_upload_report.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
+                # SEQUENTIAL PROCESSING (Safe for large files)
+                results = []
+                progress_placeholder = st.empty()
+                status_placeholder = st.empty()
                 
-                else:
-                    # SEQUENTIAL PROCESSING (New Method)
-                    results = []
-                    progress_placeholder = st.empty()
-                    status_placeholder = st.empty()
+                # Valid Formats and Codecs
+                valid_formats = ['mp4', 'mov']
+                valid_codecs = ['h264', 'avc', 'hevc', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2']
+                
+                for idx, uploaded_file in enumerate(uploaded_files):
+                    # Update progress
+                    progress_placeholder.progress((idx) / len(uploaded_files))
+                    status_placeholder.info(f"🔄 Processing file {idx + 1} of {len(uploaded_files)}: {uploaded_file.name}")
                     
-                    # Valid Formats and Codecs
-                    valid_formats = ['mp4', 'mov']
-                    valid_codecs = ['h264', 'avc', 'hevc', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2']
+                    # Process ONE file at a time
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
+                        # Save to disk
+                        shutil.copyfileobj(uploaded_file, tmp)
+                        tmp_path = tmp.name
                     
-                    for idx, uploaded_file in enumerate(uploaded_files):
-                        # Update progress
-                        progress_placeholder.progress((idx) / len(uploaded_files))
-                        status_placeholder.info(f"🔄 Processing file {idx + 1} of {len(uploaded_files)}: {uploaded_file.name}")
+                    try:
+                        # Analyze this file
+                        fmt, v_codec, a_codec = get_video_metadata(tmp_path)
                         
-                        # Process ONE file at a time
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
-                            # Save to disk
-                            shutil.copyfileobj(uploaded_file, tmp)
-                            tmp_path = tmp.name
+                        # Validation
+                        format_flag = "good to go" if fmt.lower() in valid_formats else "error"
+                        codec_flag = "good to go" if v_codec.lower() in valid_codecs else "error"
                         
-                        try:
-                            # Analyze this file
-                            fmt, v_codec, a_codec = get_video_metadata(tmp_path)
-                            
-                            # Validation
-                            format_flag = "good to go" if fmt.lower() in valid_formats else "error"
-                            codec_flag = "good to go" if v_codec.lower() in valid_codecs else "error"
-                            
-                            file_size_bytes = os.path.getsize(tmp_path)
-                            file_size_mb = file_size_bytes / (1024 * 1024)
-                            size_flag = "good to go" if file_size_mb <= 200 else "error"
-                            
-                            results.append({
-                                "File Name": uploaded_file.name,
-                                "Video Format": fmt,
-                                "Video Format Flag": format_flag,
-                                "Video Codecs": f"Video: {v_codec}, Audio: {a_codec}",
-                                "Video Codecs Flag": codec_flag,
-                                "File Size": f"{file_size_mb:.2f} MB",
-                                "File Size Flag": size_flag
-                            })
-                        finally:
-                            # Delete immediately after processing
-                            if os.path.exists(tmp_path):
-                                os.remove(tmp_path)
-                    
-                    # Complete progress
-                    progress_placeholder.progress(1.0)
-                    status_placeholder.empty()
-                    
-                    end_time = time.time()
-                    elapsed_time = end_time - start_time
-                    
-                    df = pd.DataFrame(results)
-                    st.success(f"✅ Analysis Complete! Time taken: {elapsed_time:.2f} seconds")
-                    st.dataframe(df, width="stretch")
-                    
-                    # Excel Export
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df.to_excel(writer, index=False, sheet_name='Video Metadata')
-                    processed_data = output.getvalue()
-                    
-                    st.download_button(
-                        label="📥 Download Excel Report",
-                        data=processed_data,
-                        file_name="video_metadata_upload_report.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+                        file_size_bytes = os.path.getsize(tmp_path)
+                        file_size_mb = file_size_bytes / (1024 * 1024)
+                        size_flag = "good to go" if file_size_mb <= 200 else "error"
+                        
+                        results.append({
+                            "File Name": uploaded_file.name,
+                            "Video Format": fmt,
+                            "Video Format Flag": format_flag,
+                            "Video Codecs": f"Video: {v_codec}, Audio: {a_codec}",
+                            "Video Codecs Flag": codec_flag,
+                            "File Size": f"{file_size_mb:.2f} MB",
+                            "File Size Flag": size_flag
+                        })
+                    finally:
+                        # Delete immediately after processing
+                        if os.path.exists(tmp_path):
+                            os.remove(tmp_path)
+                
+                # Complete progress
+                progress_placeholder.progress(1.0)
+                status_placeholder.empty()
+                
+                end_time = time.time()
+                elapsed_time = end_time - start_time
+                
+                df = pd.DataFrame(results)
+                st.success(f"✅ Analysis Complete! Time taken: {elapsed_time:.2f} seconds")
+                st.dataframe(df, width="stretch")
+                
+                # Excel Export
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Video Metadata')
+                processed_data = output.getvalue()
+                
+                st.download_button(
+                    label="📥 Download Excel Report",
+                    data=processed_data,
+                    file_name="video_metadata_upload_report.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
 if __name__ == "__main__":
     main()
