@@ -182,6 +182,10 @@ def main():
         if processing_method == "Quick Check (Client-side - Browser only)":
             st.info("🚀 Files stay in your browser - no upload to server. Works with MP4/MOV files.")
             
+            # Initialize session state for component results
+            if 'quick_check_results' not in st.session_state:
+                st.session_state.quick_check_results = None
+            
             # Minimal client-side HTML component
             html_code = """
             <!DOCTYPE html>
@@ -351,20 +355,25 @@ def main():
             # Display the component
             component_value = st.components.v1.html(html_code, height=120, scrolling=False)
             
-            # Debug: Show what we received
-            st.write(f"Debug - component_value type: {type(component_value)}")
-            st.write(f"Debug - component_value: {component_value}")
+            # Debug
+            st.write(f"Type: {type(component_value)}, Value: {component_value}")
             
-            # Process results from JavaScript
-            if component_value and isinstance(component_value, list) and len(component_value) > 0:
-                st.success(f"✅ Quick Check completed for {len(component_value)} files!")
+            # Check if component returned data (happens on subsequent rerun after postMessage)
+            if component_value is not None and str(type(component_value)) != "<class 'streamlit.delta_generator.DeltaGenerator'>":
+                st.session_state.quick_check_results = component_value
+                st.write("✅ Saved to session state!")
+            
+            # Display results if we have them in session state
+            if st.session_state.quick_check_results and isinstance(st.session_state.quick_check_results, list) and len(st.session_state.quick_check_results) > 0:
+                results_data = st.session_state.quick_check_results
+                st.success(f"✅ Quick Check completed for {len(results_data)} files!")
                 
                 # Valid Formats and Codecs
                 valid_formats = ['mp4', 'mov']
                 valid_codecs = ['h264', 'avc', 'hevc', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2']
                 
                 results = []
-                for item in component_value:
+                for item in results_data:
                     file_name = item['fileName']
                     fmt = item['format']
                     v_codec = item['videoCodec']
@@ -402,6 +411,11 @@ def main():
                     file_name="video_metadata_quick_check.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+                
+                # Add button to clear results and analyze new files
+                if st.button("🔄 Analyze New Files"):
+                    st.session_state.quick_check_results = None
+                    st.rerun()
         
         else:
             # Standard Upload Mode - uses Streamlit's uploader
