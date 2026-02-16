@@ -355,8 +355,8 @@ def main():
             </html>
             """
             
-            # Render the component and get return value (with key for state management)
-            component_value = components.html(html_component, height=400, scrolling=True, key="video_analyzer")
+            # Render the component (simplified call)
+            component_value = components.html(html_component, height=400)
             
             # Process results when received from JavaScript
             if component_value and isinstance(component_value, str):
