@@ -79,16 +79,8 @@ def render_quick_check():
             #downloadBtn:hover { background: #218838; }
             #status { margin-top: 10px; color: #0066cc; font-weight: 500; }
             #debugLog {
-                margin-top: 12px;
-                padding: 12px;
-                border: 1px solid #d0d7de;
-                border-radius: 6px;
-                background: #f6f8fa;
-                font-size: 13px;
-                max-height: 220px;
-                overflow-y: auto;
+                display: none;
             }
-            #debugLog div { margin-bottom: 6px; }
             #resultContainer {
                 margin-top: 18px;
                 border: 1px solid #d0d7de;
@@ -333,8 +325,10 @@ def render_quick_check():
                 }
 
                 const heading = document.createElement('div');
-                heading.textContent = 'Local Quick Check preview (browser-only):';
+                heading.textContent = 'Results:';
                 heading.style.fontWeight = '600';
+                heading.style.fontSize = '16px';
+                heading.style.marginBottom = '8px';
                 resultContainer.appendChild(heading);
 
                 const table = document.createElement('table');
@@ -565,53 +559,9 @@ def render_quick_check():
                     lastMetadata = metadata;
                     downloadBtn.style.display = 'inline-block';
                     logStep('✅ Excel download ready. Click the Download Excel button above.');
-
-                    logStep('Attempting to send results to Streamlit parent via postMessage bridge...');
-                    if (sendComponentValue({
-                        metadata: metadata,
-                        timeline: timelineEntries,
-                        payloadSize: encodedPayload.length
-                    })) {
-                        status.textContent = 'Results sent to Streamlit.';
-                        logStep('✅ Component bridge send complete.');
-                        analyzeBtn.disabled = false;
-                        updateFrameHeight();
-                        return;
-                    }
-
-                    logStep('Component bridge unavailable. Attempting parent redirect with payload...');
-                    const parentWindow = window.parent;
-                    if (parentWindow && parentWindow.location) {
-                        try {
-                            const baseUrl = parentWindow.location.href.split('?')[0];
-                            const targetUrl = baseUrl + '?results=' + encodeURIComponent(encodedPayload);
-                            parentWindow.location.href = targetUrl;
-                            logStep('Parent redirect triggered.');
-                            status.textContent = 'Redirecting with results...';
-                        } catch (redirectError) {
-                            logStep(`❌ Redirect blocked: ${redirectError.message}`);
-                            let newTab = null;
-                            try {
-                                const baseUrl = parentWindow.location.href.split('?')[0];
-                                const targetUrl = baseUrl + '?results=' + encodeURIComponent(encodedPayload);
-                                newTab = window.open(targetUrl, '_blank');
-                            } catch (popupError) {
-                                logStep(`❌ Failed to open new tab: ${popupError.message}`);
-                            }
-                            if (newTab) {
-                                logStep('✅ Opened a new browser tab with the Quick Check results payload.');
-                                status.textContent = 'Results opened in a new tab. Review Quick Check there.';
-                            } else {
-                                logStep('❌ Unable to deliver results automatically. Use the local table above.');
-                                status.textContent = 'Results shown locally. (Allow pop-ups to open Streamlit tab automatically.)';
-                            }
-                            analyzeBtn.disabled = false;
-                        }
-                    } else {
-                        logStep('❌ Unable to access parent window. Please open Quick Check in a new tab.');
-                        analyzeBtn.disabled = false;
-                        status.textContent = 'Unable to reach parent window.';
-                    }
+                    status.textContent = 'Analysis complete!';
+                    analyzeBtn.disabled = false;
+                    updateFrameHeight();
                 } catch (encodingError) {
                     logStep(`❌ Error encoding results: ${encodingError.message}`);
                     console.error('Encoding error details:', encodingError);
@@ -839,8 +789,6 @@ def render_quick_check():
             file_name="video_metadata_quick_check.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-    else:
-        st.info("Select MP4/MOV files and click Analyze to see results.")
 
 
 def main():
