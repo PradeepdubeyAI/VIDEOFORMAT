@@ -335,7 +335,7 @@ def main():
             component_value = st.components.v1.html(html_code, height=200, scrolling=False)
             
             # Process results from JavaScript
-            if component_value:
+            if component_value and isinstance(component_value, list):
                 st.success("✅ Metadata received from browser!")
                 
                 # Valid Formats and Codecs
