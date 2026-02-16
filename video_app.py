@@ -5,6 +5,7 @@ import ffmpeg
 import json
 import tempfile
 import shutil
+import time
 from io import BytesIO
 
 def get_video_metadata(file_path):
@@ -96,6 +97,63 @@ def analyze_videos(file_list, original_names=None):
     
     return pd.DataFrame(results)
 
+def analyze_videos_sequential(uploaded_files):
+    """
+    Analyzes videos one-by-one, saving/processing/deleting each before the next.
+    More memory efficient for large files.
+    """
+    results = []
+    
+    # Valid Formats and Codecs
+    valid_formats = ['mp4', 'mov']
+    valid_codecs = ['h264', 'avc', 'hevc', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2']
+    
+    total_files = len(uploaded_files)
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i, uploaded_file in enumerate(uploaded_files):
+        status_text.text(f"Processing file {i+1} of {total_files}: {uploaded_file.name}")
+        
+        # Create temporary file for this video only
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
+            temp_path = tmp.name
+            # Stream write to avoid memory spike
+            shutil.copyfileobj(uploaded_file, tmp)
+        
+        try:
+            # Extract metadata
+            fmt, v_codec, a_codec = get_video_metadata(temp_path)
+            
+            # Validation logic
+            format_flag = "good to go" if fmt.lower() in valid_formats else "error"
+            codec_flag = "good to go" if v_codec.lower() in valid_codecs else "error"
+            
+            # File size
+            file_size_bytes = os.path.getsize(temp_path)
+            file_size_mb = file_size_bytes / (1024 * 1024)
+            size_flag = "good to go" if file_size_mb <= 200 else "error"
+            
+            results.append({
+                "File Name": uploaded_file.name,
+                "Video Format": fmt,
+                "Video Format Flag": format_flag,
+                "Video Codecs": f"Video: {v_codec}, Audio: {a_codec}",
+                "Video Codecs Flag": codec_flag,
+                "File Size": f"{file_size_mb:.2f} MB",
+                "File Size Flag": size_flag
+            })
+            
+        finally:
+            # Delete temp file immediately after processing
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        
+        progress_bar.progress((i + 1) / total_files)
+    
+    status_text.text("")
+    return pd.DataFrame(results)
+
 def main():
     st.set_page_config(page_title="Video Metadata Extractor", layout="wide")
     
@@ -172,41 +230,56 @@ def main():
         uploaded_files = st.file_uploader("Choose video files", accept_multiple_files=True, type=['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'webm', 'm4v'])
 
         if uploaded_files:
+            # Processing mode selector
+            processing_mode = st.radio(
+                "Select Processing Mode (for testing):",
+                ["Sequential (Recommended - Stable)", "Batch (Legacy - May crash with large files)"],
+                help="Sequential processes one file at a time (safer). Batch processes all together (faster but risky)."
+            )
+            
             if st.button("Analyze Uploaded Videos"):
-                st.info(f"Processing {len(uploaded_files)} files...")
+                start_time = time.time()
+                st.info(f"Processing {len(uploaded_files)} files using {processing_mode.split(' ')[0]} mode...")
                 
-                # Create a temporary directory to save uploaded files
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    temp_file_paths = []
-                    original_names = []
-                    
-                    for uploaded_file in uploaded_files:
-                        # Save each file to temp dir (streaming to avoid memory spike)
-                        temp_path = os.path.join(temp_dir, uploaded_file.name)
-                        with open(temp_path, "wb") as f:
-                            shutil.copyfileobj(uploaded_file, f)
+                if "Sequential" in processing_mode:
+                    # Sequential processing - one file at a time
+                    df = analyze_videos_sequential(uploaded_files)
+                else:
+                    # Batch processing - all files together (original method)
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        temp_file_paths = []
+                        original_names = []
                         
-                        temp_file_paths.append(temp_path)
-                        original_names.append(uploaded_file.name)
-                    
-                    # Analyze
-                    df = analyze_videos(temp_file_paths, original_names)
-                    
-                    st.success("Analysis Complete!")
-                    st.dataframe(df, width="stretch")
-                    
-                    # Excel Export
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df.to_excel(writer, index=False, sheet_name='Video Metadata')
-                    processed_data = output.getvalue()
-                    
-                    st.download_button(
-                        label="📥 Download Excel Report",
-                        data=processed_data,
-                        file_name="video_metadata_upload_report.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+                        for uploaded_file in uploaded_files:
+                            # Save each file to temp dir (streaming to avoid memory spike)
+                            temp_path = os.path.join(temp_dir, uploaded_file.name)
+                            with open(temp_path, "wb") as f:
+                                shutil.copyfileobj(uploaded_file, f)
+                            
+                            temp_file_paths.append(temp_path)
+                            original_names.append(uploaded_file.name)
+                        
+                        # Analyze
+                        df = analyze_videos(temp_file_paths, original_names)
+                
+                end_time = time.time()
+                processing_time = end_time - start_time
+                
+                st.success(f"✅ Analysis Complete! Time taken: {processing_time:.2f} seconds")
+                st.dataframe(df, width="stretch")
+                
+                # Excel Export
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Video Metadata')
+                processed_data = output.getvalue()
+                
+                st.download_button(
+                    label="📥 Download Excel Report",
+                    data=processed_data,
+                    file_name="video_metadata_upload_report.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
 if __name__ == "__main__":
     main()
