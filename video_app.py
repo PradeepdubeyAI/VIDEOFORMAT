@@ -174,6 +174,7 @@ def main():
 
         if uploaded_files:
             # Add processing method selection
+            st.success(f"✅ {len(uploaded_files)} file(s) uploaded successfully! Choose processing method below:")
             st.markdown("---")
             processing_method = st.radio(
                 "⚙️ Select Processing Method:",
