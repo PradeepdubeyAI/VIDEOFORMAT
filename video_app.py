@@ -182,19 +182,40 @@ def main():
         if processing_method == "Quick Check (Client-side - Browser only)":
             st.info("🚀 Quick Check: Files analyzed in your browser without uploading. Works with MP4/MOV files.")
             
+            # DEBUG: Show query params
+            st.write("🔍 **Debug Info:**")
+            all_params = dict(st.query_params)
+            st.write(f"All query params: {all_params}")
+            
             # Check if we have results from query parameters
             results_param = st.query_params.get("results")
+            st.write(f"Results param exists: {results_param is not None}")
             
             if results_param:
+                st.write(f"Results param length: {len(results_param)} characters")
+                st.write(f"First 100 chars: {results_param[:100]}...")
+                
                 # Decode results from URL
                 import json
                 import base64
                 try:
+                    st.write("⏳ Attempting to decode Base64...")
                     decoded = base64.b64decode(results_param).decode('utf-8')
+                    st.write(f"✅ Decoded successfully! Length: {len(decoded)} chars")
+                    st.write(f"First 200 chars of JSON: {decoded[:200]}...")
+                    
+                    st.write("⏳ Parsing JSON...")
                     metadata_list = json.loads(decoded)
+                    st.write(f"✅ JSON parsed! Got {len(metadata_list)} items")
+                    st.write(f"First item: {metadata_list[0] if metadata_list else 'None'}")
                     
+                    st.write("---")
+                    st.write("📊 **Processing Steps (Python):**")
+                    st.write("1️⃣ Received Base64 metadata via query param")
+                    st.write("2️⃣ Decoded and parsed JSON successfully")
+                    st.write(f"3️⃣ Preparing DataFrame with {len(metadata_list)} rows")
                     st.success(f"✅ Quick Check completed for {len(metadata_list)} files!")
-                    
+
                     # Valid Formats and Codecs
                     valid_formats = ['mp4', 'mov']
                     valid_codecs = ['h264', 'avc', 'hevc', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2']
@@ -251,6 +272,13 @@ def main():
                         st.rerun()
             
             else:
+                st.write("---")
+                st.write("🧭 **Client-side Steps:**")
+                st.write("1️⃣ Choose MP4/MOV files using the picker below")
+                st.write("2️⃣ Click Analyze to run browser-side metadata extraction")
+                st.write("3️⃣ Watch the status bar for live progress")
+                st.write("4️⃣ After completion the page will refresh with results")
+
                 # Show the file picker component
                 html_code = """
                 <!DOCTYPE html>
@@ -271,18 +299,37 @@ def main():
                         }
                         #analyzeBtn:disabled { background: #ccc; }
                         #status { margin-top: 10px; color: #0066cc; font-weight: 500; }
+                        #debugLog { 
+                            margin-top: 12px; 
+                            padding: 12px; 
+                            border: 1px solid #d0d7de; 
+                            border-radius: 6px; 
+                            background: #f6f8fa; 
+                            font-size: 13px;
+                            max-height: 200px;
+                            overflow-y: auto;
+                        }
+                        #debugLog div { margin-bottom: 6px; }
                     </style>
                 </head>
                 <body>
                     <input type="file" id="fileInput" multiple accept="video/*,.mp4,.mov,.m4v">
                     <button id="analyzeBtn">Analyze</button>
                     <div id="status"></div>
+                    <div id="debugLog"><strong>Debug Timeline</strong></div>
                     
                     <script>
                         const fileInput = document.getElementById('fileInput');
                         const analyzeBtn = document.getElementById('analyzeBtn');
                         const status = document.getElementById('status');
+                        const debugLog = document.getElementById('debugLog');
                         const TIMEOUT_MS = 5000;
+
+                        const logStep = (message) => {
+                            const entry = document.createElement('div');
+                            entry.textContent = message;
+                            debugLog.appendChild(entry);
+                        };
                         
                         analyzeBtn.addEventListener('click', async () => {
                             const files = fileInput.files;
@@ -293,12 +340,14 @@ def main():
                             
                             analyzeBtn.disabled = true;
                             status.textContent = `Analyzing ${files.length} file(s)...`;
+                            logStep(`Selected ${files.length} file(s). Starting analysis...`);
                             
                             const metadata = [];
                             
                             for (let i = 0; i < files.length; i++) {
                                 const file = files[i];
                                 status.textContent = `Processing ${i + 1}/${files.length}: ${file.name}`;
+                                logStep(`Processing file ${i + 1}: ${file.name}`);
                                 
                                 try {
                                     const data = await Promise.race([
@@ -308,6 +357,7 @@ def main():
                                     metadata.push(data);
                                 } catch (error) {
                                     console.error(`Error processing ${file.name}:`, error);
+                                    logStep(`⚠️ Error on ${file.name}: ${error.message}`);
                                     metadata.push({
                                         fileName: file.name,
                                         format: 'error',
@@ -320,8 +370,10 @@ def main():
                             
                             // Encode results and redirect
                             status.textContent = 'Complete! Redirecting...';
+                            logStep(`Analysis complete. Preparing ${metadata.length} result(s) for redirect.`);
                             const jsonStr = JSON.stringify(metadata);
                             const base64Data = btoa(jsonStr);
+                            logStep(`Encoded payload size: ${base64Data.length} characters.`);
                             
                             // Redirect to same page with results in query params
                             const currentUrl = window.location.href.split('?')[0];
@@ -340,6 +392,7 @@ def main():
                                 
                                 // Non-MP4/MOV files
                                 if (!['mp4', 'mov', 'm4v'].includes(ext)) {
+                                    logStep(`Skipping ${file.name} (extension ${ext}) - treated as non-MP4.`);
                                     resolve({
                                         fileName: file.name,
                                         format: ext,
@@ -360,6 +413,7 @@ def main():
                                         mp4boxfile.onError = (err) => {
                                             if (!resolved) {
                                                 resolved = true;
+                                                logStep(`❌ MP4Box parse error on ${file.name}`);
                                                 reject(new Error('MP4Box parse error'));
                                             }
                                         };
@@ -399,6 +453,7 @@ def main():
                                                 audioCodec: audioCodec,
                                                 size: file.size
                                             });
+                                            logStep(`✅ Parsed ${file.name} → format: ${format}, video: ${videoCodec}, audio: ${audioCodec}`);
                                         };
                                         
                                         buffer.fileStart = 0;
