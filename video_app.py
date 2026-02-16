@@ -180,80 +180,50 @@ def main():
         st.markdown("---")
         
         if processing_method == "Quick Check (Client-side - Browser only)":
-            st.info("🚀 **Quick Check Mode**: Files are analyzed in your browser WITHOUT uploading to server. Perfect for 10+ large files!")
-            st.warning("⚠️ Only works with MP4/MOV files. Uses first 1MB of each file for metadata parsing.")
+            st.info("🚀 Files stay in your browser - no upload to server. Works with MP4/MOV files.")
             
-            # Pure client-side HTML component with file picker
+            # Minimal client-side HTML component
             html_code = """
             <!DOCTYPE html>
             <html>
             <head>
                 <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
                 <style>
-                    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px; }
-                    .upload-section { 
-                        background: #f8f9fa; 
-                        border: 2px dashed #dee2e6; 
-                        border-radius: 8px; 
-                        padding: 30px; 
-                        text-align: center; 
-                        margin: 20px 0;
-                    }
-                    #fileInput { 
-                        margin: 15px 0; 
-                        padding: 10px;
-                        font-size: 16px;
-                    }
+                    body { font-family: sans-serif; padding: 10px; }
+                    #fileInput { margin: 10px 0; }
                     #analyzeBtn { 
                         background: #FF4B4B; 
                         color: white; 
-                        padding: 12px 30px; 
+                        padding: 8px 20px; 
                         border: none; 
-                        border-radius: 5px; 
-                        cursor: pointer; 
-                        font-size: 16px;
-                        font-weight: 600;
-                        margin-top: 15px;
+                        border-radius: 4px; 
+                        cursor: pointer;
+                        margin-left: 10px;
                     }
-                    #analyzeBtn:hover { background: #FF6B6B; }
-                    #analyzeBtn:disabled { background: #ccc; cursor: not-allowed; }
-                    #status { 
-                        margin: 20px 0; 
-                        padding: 15px;
-                        background: #e3f2fd;
-                        border-radius: 5px;
-                        color: #1565c0; 
-                        font-weight: 600;
-                        display: none;
-                    }
-                    #status.show { display: block; }
+                    #analyzeBtn:disabled { background: #ccc; }
+                    #status { margin-top: 10px; color: #0066cc; font-weight: 500; }
                 </style>
             </head>
             <body>
-                <div class="upload-section">
-                    <h3>📁 Select Video Files</h3>
-                    <input type="file" id="fileInput" multiple accept="video/*,.mp4,.mov,.m4v">
-                    <br>
-                    <button id="analyzeBtn">🚀 Analyze Videos</button>
-                </div>
+                <input type="file" id="fileInput" multiple accept="video/*,.mp4,.mov,.m4v">
+                <button id="analyzeBtn">Analyze</button>
                 <div id="status"></div>
                 
                 <script>
                     const fileInput = document.getElementById('fileInput');
                     const analyzeBtn = document.getElementById('analyzeBtn');
                     const status = document.getElementById('status');
-                    const TIMEOUT_MS = 5000; // 5 second timeout per file
+                    const TIMEOUT_MS = 5000;
                     
                     analyzeBtn.addEventListener('click', async () => {
                         const files = fileInput.files;
                         if (files.length === 0) {
-                            alert('⚠️ Please select video files first');
+                            alert('Please select video files first');
                             return;
                         }
                         
                         analyzeBtn.disabled = true;
-                        status.className = 'show';
-                        status.textContent = `Starting analysis of ${files.length} file(s)...`;
+                        status.textContent = `Analyzing ${files.length} file(s)...`;
                         
                         const metadata = [];
                         
@@ -280,7 +250,7 @@ def main():
                         }
                         
                         // Send results back to Streamlit
-                        status.textContent = '✅ Analysis complete! Sending results...';
+                        status.textContent = 'Complete!';
                         window.parent.postMessage({
                             type: 'streamlit:setComponentValue',
                             value: metadata
@@ -379,7 +349,7 @@ def main():
             """
             
             # Display the component
-            component_value = st.components.v1.html(html_code, height=300, scrolling=False)
+            component_value = st.components.v1.html(html_code, height=120, scrolling=False)
             
             # Process results from JavaScript
             if component_value and isinstance(component_value, list):
