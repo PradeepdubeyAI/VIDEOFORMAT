@@ -481,22 +481,19 @@ def render_quick_check():
                 const issues = [];
                 const sizeMB = (item.size || 0) / (1024 * 1024);
                 
-                if (!['mp4', 'mov'].includes((item.format || '').toLowerCase())) {
+                const validFormats = ['mp4', 'mov'];
+                if (!validFormats.includes((item.format || '').toLowerCase())) {
                     issues.push('Format not MP4/MOV');
                 }
                 
+                const validCodecs = ['h264', 'avc', 'hevc', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2'];
                 const videoCodec = (item.videoCodec || '').toLowerCase();
-                if (!['h264', 'hevc'].includes(videoCodec)) {
-                    issues.push('Video codec not H.264/HEVC');
+                if (!validCodecs.includes(videoCodec)) {
+                    issues.push('Video codec not supported');
                 }
                 
-                const audioCodec = (item.audioCodec || '').toLowerCase();
-                if (audioCodec !== 'aac' && audioCodec !== 'none') {
-                    issues.push('Audio codec not AAC');
-                }
-                
-                if (sizeMB > 500) {
-                    issues.push(`File size > 500 MB (${sizeMB.toFixed(2)} MB)`);
+                if (sizeMB > 200) {
+                    issues.push(`File size > 200 MB (${sizeMB.toFixed(2)} MB)`);
                 }
                 
                 const status = issues.length === 0 ? 'Good to Go' : '⚠️ Check Required';
@@ -545,12 +542,69 @@ def render_quick_check():
                 ];
                 worksheet['!cols'] = colWidths;
 
+                const range = XLSX.utils.decode_range(worksheet['!ref']);
+                
+                for (let row = range.s.r; row <= range.e.r; row++) {
+                    for (let col = range.s.c; col <= range.e.c; col++) {
+                        const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
+                        if (!worksheet[cellAddress]) continue;
+                        
+                        if (!worksheet[cellAddress].s) worksheet[cellAddress].s = {};
+                        
+                        if (row === 0) {
+                            worksheet[cellAddress].s = {
+                                font: { bold: true, color: { rgb: "FFFFFF" } },
+                                fill: { fgColor: { rgb: "4472C4" } },
+                                alignment: { horizontal: "center", vertical: "center", wrapText: true },
+                                border: {
+                                    top: { style: "thin", color: { rgb: "000000" } },
+                                    bottom: { style: "thin", color: { rgb: "000000" } },
+                                    left: { style: "thin", color: { rgb: "000000" } },
+                                    right: { style: "thin", color: { rgb: "000000" } }
+                                }
+                            };
+                        } else {
+                            const cellValue = worksheet[cellAddress].v;
+                            let fillColor = "FFFFFF";
+                            let fontColor = "000000";
+                            let fontBold = false;
+                            
+                            if (col === 5) {
+                                if (cellValue === 'Good to Go') {
+                                    fillColor = "C6EFCE";
+                                    fontColor = "006100";
+                                    fontBold = true;
+                                } else if (cellValue && cellValue.includes('⚠️')) {
+                                    fillColor = "FFC7CE";
+                                    fontColor = "9C0006";
+                                    fontBold = true;
+                                }
+                            }
+                            
+                            worksheet[cellAddress].s = {
+                                font: { bold: fontBold, color: { rgb: fontColor } },
+                                fill: { fgColor: { rgb: fillColor } },
+                                alignment: { vertical: "center", wrapText: col === 0 || col === 6 },
+                                border: {
+                                    top: { style: "thin", color: { rgb: "D3D3D3" } },
+                                    bottom: { style: "thin", color: { rgb: "D3D3D3" } },
+                                    left: { style: "thin", color: { rgb: "D3D3D3" } },
+                                    right: { style: "thin", color: { rgb: "D3D3D3" } }
+                                }
+                            };
+                        }
+                    }
+                }
+                
+                worksheet['!autofilter'] = { ref: XLSX.utils.encode_range(range) };
+                worksheet['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activePane: 'bottomLeft' };
+
                 XLSX.utils.book_append_sheet(workbook, worksheet, 'Video Metadata');
 
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
                 const filename = `video_metadata_${timestamp}.xlsx`;
 
-                XLSX.writeFile(workbook, filename);
+                XLSX.writeFile(workbook, filename, { cellStyles: true });
                 logStep(`✅ Excel file downloaded: ${filename}`);
                 status.textContent = 'Excel file downloaded successfully!';
             };
