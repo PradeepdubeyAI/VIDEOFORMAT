@@ -171,6 +171,7 @@ def render_quick_check():
 
         <script>
             const timelineEntries = [];
+            const timelineEntries = [];
             const fileInput = document.getElementById('fileInput');
             const analyzeBtn = document.getElementById('analyzeBtn');
             const status = document.getElementById('status');
@@ -179,11 +180,11 @@ def render_quick_check():
             const CHUNK_SIZE = 4 * 1024 * 1024;
             const toMb = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
 
-            const updateFrameHeight = () => {
-                if (window.Streamlit && window.Streamlit.setFrameHeight) {
-                    window.Streamlit.setFrameHeight(document.body.scrollHeight);
-                }
-            };
+            let streamlitRef = null;
+            let waitingForStreamlit = false;
+            let parentAccessLogged = false;
+            const STREAMLIT_POLL_INTERVAL = 250;
+            const STREAMLIT_POLL_TIMEOUT = 8000;
 
             const logStep = (message) => {
                 timelineEntries.push(message);
@@ -193,34 +194,102 @@ def render_quick_check():
                 updateFrameHeight();
             };
 
-            function onRender(event) {
-                if (window.Streamlit) {
-                    logStep('✅ Streamlit component lib loaded and initialized.');
-                    if (window.Streamlit.setComponentValue) {
-                        logStep('✅ setComponentValue is available.');
-                    } else {
-                        logStep('⚠️ setComponentValue not available.');
-                    }
-                    window.Streamlit.setFrameHeight(document.body.scrollHeight);
-                } else {
-                    logStep('⚠️ Streamlit object not found after load.');
+            const getStreamlit = () => {
+                if (streamlitRef) {
+                    return streamlitRef;
                 }
-            }
 
-            if (window.Streamlit) {
-                window.Streamlit.events.addEventListener(window.Streamlit.RENDER_EVENT, onRender);
-                window.Streamlit.setComponentReady();
-            } else {
-                window.addEventListener('load', () => {
-                    if (window.Streamlit) {
-                        window.Streamlit.events.addEventListener(window.Streamlit.RENDER_EVENT, onRender);
-                        window.Streamlit.setComponentReady();
-                    } else {
-                        logStep('⚠️ Streamlit object not found. Running in standalone mode.');
+                if (window.Streamlit) {
+                    return window.Streamlit;
+                }
+
+                try {
+                    if (window.parent && window.parent.Streamlit) {
+                        return window.parent.Streamlit;
                     }
-                    updateFrameHeight();
-                });
-            }
+                } catch (error) {
+                    if (!parentAccessLogged) {
+                        parentAccessLogged = true;
+                        logStep(`⚠️ Accessing parent Streamlit blocked: ${error.message}`);
+                    }
+                }
+
+                return null;
+            };
+
+            const updateFrameHeight = () => {
+                const streamlit = getStreamlit();
+                if (streamlit && streamlit.setFrameHeight) {
+                    streamlit.setFrameHeight(document.body.scrollHeight);
+                }
+            };
+
+            const setupStreamlit = (streamlit) => {
+                if (!streamlit || setupStreamlit.initialized) {
+                    return;
+                }
+
+                setupStreamlit.initialized = true;
+                streamlitRef = streamlit;
+                logStep('✅ Streamlit object detected.');
+
+                if (streamlit.events && streamlit.RENDER_EVENT && streamlit.events.addEventListener) {
+                    streamlit.events.addEventListener(streamlit.RENDER_EVENT, () => {
+                        logStep('↻ Streamlit render event received.');
+                        updateFrameHeight();
+                    });
+                } else {
+                    logStep('⚠️ Streamlit events API unavailable.');
+                }
+
+                if (streamlit.setComponentReady) {
+                    streamlit.setComponentReady();
+                    logStep('✅ setComponentReady invoked.');
+                } else {
+                    logStep('⚠️ setComponentReady unavailable on Streamlit object.');
+                }
+
+                if (streamlit.setComponentValue) {
+                    logStep('✅ setComponentValue is available.');
+                } else {
+                    logStep('⚠️ setComponentValue not available.');
+                }
+
+                updateFrameHeight();
+            };
+
+            const waitForStreamlit = () => {
+                if (waitingForStreamlit) {
+                    return;
+                }
+
+                waitingForStreamlit = true;
+                let attempts = 0;
+                const maxAttempts = Math.ceil(STREAMLIT_POLL_TIMEOUT / STREAMLIT_POLL_INTERVAL);
+
+                const intervalId = setInterval(() => {
+                    const streamlit = getStreamlit();
+                    attempts += 1;
+
+                    if (streamlit) {
+                        clearInterval(intervalId);
+                        waitingForStreamlit = false;
+                        logStep(`✅ Streamlit object available after ${attempts} attempt(s).`);
+                        setupStreamlit(streamlit);
+                    } else if (attempts >= maxAttempts) {
+                        clearInterval(intervalId);
+                        waitingForStreamlit = false;
+                        logStep('⚠️ Streamlit object not available after waiting. Staying in standalone mode.');
+                    }
+                }, STREAMLIT_POLL_INTERVAL);
+            };
+
+            window.addEventListener('load', () => {
+                waitForStreamlit();
+                updateFrameHeight();
+            });
+
+            waitForStreamlit();
 
             analyzeBtn.addEventListener('click', async () => {
                 const files = fileInput.files;
@@ -271,16 +340,16 @@ def render_quick_check():
                     logStep(`JSON string length: ${jsonStr.length} characters.`);
 
                     logStep('Base64 encoding (UTF-8 safe)...');
-                    // Convert to UTF-8 bytes then base64 encode
                     const utf8Bytes = encodeURIComponent(jsonStr).replace(/%([0-9A-F]{2})/g, (_, p1) => {
                         return String.fromCharCode(parseInt(p1, 16));
                     });
                     const encodedPayload = btoa(utf8Bytes);
                     logStep(`Encoded payload size (base64): ${encodedPayload.length} characters.`);
 
-                    if (window.Streamlit && window.Streamlit.setComponentValue) {
+                    const streamlit = getStreamlit();
+                    if (streamlit && streamlit.setComponentValue) {
                         logStep('Sending results to Streamlit parent via component bridge...');
-                        window.Streamlit.setComponentValue({
+                        streamlit.setComponentValue({
                             metadata: metadata,
                             timeline: timelineEntries,
                             payloadSize: encodedPayload.length
