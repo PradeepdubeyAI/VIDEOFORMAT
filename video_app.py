@@ -182,9 +182,11 @@ def main():
         if processing_method == "Quick Check (Client-side - Browser only)":
             st.info("🚀 Files stay in your browser - no upload to server. Works with MP4/MOV files.")
             
-            # Initialize session state for component results
+            # Initialize session state
             if 'quick_check_results' not in st.session_state:
                 st.session_state.quick_check_results = None
+            if 'component_key' not in st.session_state:
+                st.session_state.component_key = 0
             
             # Minimal client-side HTML component
             html_code = """
@@ -192,6 +194,30 @@ def main():
             <html>
             <head>
                 <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
+                <script>
+                    // Streamlit component communication
+                    const Streamlit = {
+                        setComponentValue: function(value) {
+                            window.parent.postMessage({
+                                isStreamlitMessage: true,
+                                type: 'streamlit:setComponentValue',
+                                value: value
+                            }, '*');
+                        },
+                        setComponentReady: function() {
+                            window.parent.postMessage({
+                                isStreamlitMessage: true,
+                                type: 'streamlit:componentReady',
+                                apiVersion: 1
+                            }, '*');
+                        }
+                    };
+                    
+                    // Signal that component is ready
+                    window.addEventListener('load', () => {
+                        Streamlit.setComponentReady();
+                    });
+                </script>
                 <style>
                     body { font-family: sans-serif; padding: 10px; }
                     #fileInput { margin: 10px 0; }
@@ -255,10 +281,7 @@ def main():
                         
                         // Send results back to Streamlit
                         status.textContent = 'Complete!';
-                        window.parent.postMessage({
-                            type: 'streamlit:setComponentValue',
-                            value: metadata
-                        }, '*');
+                        Streamlit.setComponentValue(metadata);
                     });
                     
                     function timeout(ms) {
@@ -352,16 +375,23 @@ def main():
             </html>
             """
             
-            # Display the component
-            component_value = st.components.v1.html(html_code, height=120, scrolling=False)
+            # Display the component with a unique key
+            component_value = st.components.v1.html(
+                html_code, 
+                height=120, 
+                scrolling=False,
+                key=f"quick_check_{st.session_state.component_key}"
+            )
             
             # Debug
-            st.write(f"Type: {type(component_value)}, Value: {component_value}")
+            st.write(f"Type: {type(component_value)}")
+            if component_value is not None:
+                st.write(f"Value received: {component_value}")
             
-            # Check if component returned data (happens on subsequent rerun after postMessage)
-            if component_value is not None and str(type(component_value)) != "<class 'streamlit.delta_generator.DeltaGenerator'>":
+            # Check if component returned data
+            if component_value is not None and isinstance(component_value, list):
                 st.session_state.quick_check_results = component_value
-                st.write("✅ Saved to session state!")
+                st.write("✅ Data received and saved!")
             
             # Display results if we have them in session state
             if st.session_state.quick_check_results and isinstance(st.session_state.quick_check_results, list) and len(st.session_state.quick_check_results) > 0:
