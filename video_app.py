@@ -169,24 +169,24 @@ def main():
 
     elif input_method == "Upload Files":
         st.subheader("📤 File Upload Analysis")
-        st.markdown("**🚀 New: Browser-based analysis** - No upload needed! Analyze 50+ videos instantly.")
+        st.markdown("**Choose your validation method:**\n- **Quick Check:** Format & size only (instant, 50+ files)\n- **Full Analysis:** Format, codecs & size (complete, may timeout with many files)")
         
         # Tab selection for analysis method
         analysis_tab = st.radio(
             "Select Analysis Method:",
-            ("🚀 Browser Analysis (Recommended - Fast, No Upload)", "📤 Upload Analysis (Legacy - Slow)"),
-            help="Browser Analysis: Extracts metadata locally, works with 50+ files. Upload Analysis: Traditional method, may timeout with many files."
+            ("🚀 Quick Check (Format & Size Only - No Upload)", "📤 Full Analysis (Format, Codec & Size - Requires Upload)"),
+            help="Quick Check: Instant results, validates format and size only. Full Analysis: Complete validation including codecs, but slower for large files."
         )
         
-        if analysis_tab == "🚀 Browser Analysis (Recommended - Fast, No Upload)":
-            st.info("💡 **How it works:** Your browser reads video metadata locally (no upload!). Only metadata is sent to server.")
+        if analysis_tab == "🚀 Quick Check (Format & Size Only - No Upload)":
+            st.info("💡 **How it works:** Validates format and file size instantly in your browser. For codec validation, use Full Analysis.")
+            st.warning("⚠️ **Limitation:** Browser cannot detect video codecs. Only format (mp4/mov) and file size are validated.")
             
-            # HTML component with mp4box.js for client-side analysis
+            # HTML component for browser-based file info extraction
             html_component = """
             <!DOCTYPE html>
             <html>
             <head>
-                <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
                 <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.0.0/dist/streamlit-component-lib.js"></script>
                 <style>
                     body { font-family: sans-serif; padding: 20px; }
@@ -224,95 +224,20 @@ def main():
 
                     async function getVideoInfo(file) {
                         return new Promise((resolve) => {
-                            // Basic file info (always available)
+                            // Get basic file info (always fast and reliable)
+                            const ext = file.name.split('.').pop().toLowerCase();
+                            
                             const basicInfo = {
                                 fileName: file.name,
                                 fileSize: file.size,
-                                fileSizeMB: (file.size / (1024 * 1024)).toFixed(2)
+                                fileSizeMB: (file.size / (1024 * 1024)).toFixed(2),
+                                format: ext,
+                                videoCodec: 'unknown',  // Browser can't reliably detect codec without upload
+                                audioCodec: 'unknown'
                             };
-
-                            // Try to extract format from extension
-                            const ext = file.name.split('.').pop().toLowerCase();
-                            basicInfo.format = ext;
-
-                            // For MP4/MOV, try to extract codec info using mp4box.js
-                            if (ext === 'mp4' || ext === 'mov' || ext === 'm4v') {
-                                try {
-                                    const reader = new FileReader();
-                                    // Read only first 2MB for metadata
-                                    const blob = file.slice(0, 2 * 1024 * 1024);
-                                    
-                                    reader.onload = function(e) {
-                                        try {
-                                            const arrayBuffer = e.target.result;
-                                            arrayBuffer.fileStart = 0;
-                                            
-                                            const mp4boxfile = MP4Box.createFile();
-                                            mp4boxfile.onReady = function(info) {
-                                                let videoCodec = 'Unknown';
-                                                let audioCodec = 'None';
-                                                
-                                                if (info.videoTracks && info.videoTracks.length > 0) {
-                                                    const vTrack = info.videoTracks[0];
-                                                    videoCodec = vTrack.codec || 'Unknown';
-                                                }
-                                                
-                                                if (info.audioTracks && info.audioTracks.length > 0) {
-                                                    const aTrack = info.audioTracks[0];
-                                                    audioCodec = aTrack.codec || 'Unknown';
-                                                }
-                                                
-                                                resolve({
-                                                    ...basicInfo,
-                                                    videoCodec: videoCodec.toLowerCase(),
-                                                    audioCodec: audioCodec.toLowerCase()
-                                                });
-                                            };
-                                            
-                                            mp4boxfile.onError = function(e) {
-                                                // Fallback to basic info if mp4box fails
-                                                resolve({
-                                                    ...basicInfo,
-                                                    videoCodec: 'unknown',
-                                                    audioCodec: 'unknown'
-                                                });
-                                            };
-                                            
-                                            mp4boxfile.appendBuffer(arrayBuffer);
-                                            mp4boxfile.flush();
-                                        } catch (err) {
-                                            resolve({
-                                                ...basicInfo,
-                                                videoCodec: 'unknown',
-                                                audioCodec: 'unknown'
-                                            });
-                                        }
-                                    };
-                                    
-                                    reader.onerror = function() {
-                                        resolve({
-                                            ...basicInfo,
-                                            videoCodec: 'unknown',
-                                            audioCodec: 'unknown'
-                                        });
-                                    };
-                                    
-                                    reader.readAsArrayBuffer(blob);
-                                } catch (err) {
-                                    resolve({
-                                        ...basicInfo,
-                                        videoCodec: 'unknown',
-                                        audioCodec: 'unknown'
-                                    });
-                                }
-                            } else {
-                                // For non-MP4/MOV files, return basic info
-                                resolve({
-                                    ...basicInfo,
-                                    videoCodec: 'unknown',
-                                    audioCodec: 'unknown'
-                                });
-                            }
+                            
+                            // Immediately resolve with basic info
+                            resolve(basicInfo);
                         });
                     }
 
@@ -364,6 +289,8 @@ def main():
                     metadata_list = json.loads(component_value)
                     st.success(f"✅ Received metadata for {len(metadata_list)} files!")
                     
+                    st.info("ℹ️ **Note:** Browser analysis validates format and size. Codec validation requires file upload (use Legacy method if needed).")
+                    
                     # Valid Formats and Codecs
                     valid_formats = ['mp4', 'mov', 'm4v']
                     valid_codecs = ['h264', 'avc', 'avc1', 'hevc', 'hvc1', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2', 'mp4v']
@@ -377,7 +304,13 @@ def main():
                         
                         # Validation logic
                         format_flag = "good to go" if fmt.lower() in valid_formats else "error"
-                        codec_flag = "good to go" if any(vc in v_codec.lower() for vc in valid_codecs) else "error"
+                        
+                        # Skip codec validation if unknown (browser limitation)
+                        if v_codec.lower() == 'unknown':
+                            codec_flag = "unable to detect (browser limitation)"
+                        else:
+                            codec_flag = "good to go" if any(vc in v_codec.lower() for vc in valid_codecs) else "error"
+                        
                         size_flag = "good to go" if file_size_mb <= 200 else "error"
                         
                         results.append({
@@ -408,8 +341,9 @@ def main():
                 except Exception as e:
                     st.error(f"Error processing metadata: {str(e)}")
         
-        else:  # Legacy upload method
-            st.warning("⚠️ This method may timeout with 10+ large files. Consider using Browser Analysis instead.")
+        else:  # Full Analysis (Upload method)
+            st.info("📊 **Full validation:** Checks format, codecs (h264/hevc/mpeg), and file size.")
+            st.warning("⚠️ This method may timeout with 10+ large files due to upload limits.")
             
             uploaded_files = st.file_uploader("Choose video files", accept_multiple_files=True, type=['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'webm', 'm4v'])
 
