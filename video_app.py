@@ -108,7 +108,7 @@ def render_quick_check():
     <body>
         <div id="fileInputWrapper">
             <label id="fileLabel" for="fileInput">Select video files:</label>
-            <input type="file" id="fileInput" multiple accept="video/*">
+            <input type="file" id="fileInput" multiple accept="video/*,.mp4,.mov,.avi,.mkv,.flv,.wmv,.webm,.m4v,.mpeg,.mpg">
             <button id="analyzeBtn">Analyze</button>
             <button id="downloadBtn">📥 Download Excel</button>
         </div>
