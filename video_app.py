@@ -176,6 +176,28 @@ def render_quick_check():
                 overflow-y: auto;
             }
             #debugLog div { margin-bottom: 6px; }
+            #resultContainer {
+                margin-top: 18px;
+                border: 1px solid #d0d7de;
+                border-radius: 6px;
+                padding: 12px;
+                background: #ffffff;
+            }
+            #resultsTable {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 8px;
+                font-size: 13px;
+            }
+            #resultsTable th, #resultsTable td {
+                border: 1px solid #d0d7de;
+                padding: 6px 10px;
+                text-align: left;
+            }
+            #resultsTable th {
+                background: #f0f3f5;
+                font-weight: 600;
+            }
         </style>
     </head>
     <body>
@@ -186,6 +208,7 @@ def render_quick_check():
         </div>
         <div id="status"></div>
         <div id="debugLog"><strong>Debug Timeline</strong></div>
+        <div id="resultContainer"></div>
 
         <script>
             const timelineEntries = [];
@@ -193,6 +216,7 @@ def render_quick_check():
             const analyzeBtn = document.getElementById('analyzeBtn');
             const status = document.getElementById('status');
             const debugLog = document.getElementById('debugLog');
+            const resultContainer = document.getElementById('resultContainer');
             const TIMEOUT_MS = 45000;
             const CHUNK_SIZE = 4 * 1024 * 1024;
             const toMb = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
@@ -317,6 +341,53 @@ def render_quick_check():
                 updateFrameHeight();
             });
 
+            const renderLocalResults = (rows) => {
+                if (!resultContainer) {
+                    return;
+                }
+                resultContainer.innerHTML = '';
+
+                if (!rows || rows.length === 0) {
+                    resultContainer.innerHTML = '<em>No results to display.</em>';
+                    return;
+                }
+
+                const heading = document.createElement('div');
+                heading.textContent = 'Local Quick Check preview (browser-only):';
+                heading.style.fontWeight = '600';
+                resultContainer.appendChild(heading);
+
+                const table = document.createElement('table');
+                table.id = 'resultsTable';
+                const headerRow = document.createElement('tr');
+                ['File Name', 'Format', 'Video Codec', 'Audio Codec', 'Size (MB)'].forEach((label) => {
+                    const th = document.createElement('th');
+                    th.textContent = label;
+                    headerRow.appendChild(th);
+                });
+                table.appendChild(headerRow);
+
+                rows.forEach((item) => {
+                    const tr = document.createElement('tr');
+                    const safeSize = (item.size || 0) / (1024 * 1024);
+                    const cells = [
+                        item.fileName || 'unknown',
+                        item.format || 'unknown',
+                        item.videoCodec || 'unknown',
+                        item.audioCodec || 'unknown',
+                        safeSize.toFixed(2)
+                    ];
+                    cells.forEach((value) => {
+                        const td = document.createElement('td');
+                        td.textContent = value;
+                        tr.appendChild(td);
+                    });
+                    table.appendChild(tr);
+                });
+
+                resultContainer.appendChild(table);
+            };
+
             analyzeBtn.addEventListener('click', async () => {
                 const files = fileInput.files;
                 if (files.length === 0) {
@@ -372,6 +443,9 @@ def render_quick_check():
                     const encodedPayload = btoa(utf8Bytes);
                     logStep(`Encoded payload size (base64): ${encodedPayload.length} characters.`);
 
+                    logStep('Rendering local results preview in component...');
+                    renderLocalResults(metadata);
+
                     logStep('Attempting to send results to Streamlit parent via postMessage bridge...');
                     if (sendComponentValue({
                         metadata: metadata,
@@ -390,13 +464,28 @@ def render_quick_check():
                     if (parentWindow && parentWindow.location) {
                         try {
                             const baseUrl = parentWindow.location.href.split('?')[0];
-                            parentWindow.location.href = baseUrl + '?results=' + encodeURIComponent(encodedPayload);
+                            const targetUrl = baseUrl + '?results=' + encodeURIComponent(encodedPayload);
+                            parentWindow.location.href = targetUrl;
                             logStep('Parent redirect triggered.');
                             status.textContent = 'Redirecting with results...';
                         } catch (redirectError) {
                             logStep(`❌ Redirect blocked: ${redirectError.message}`);
+                            let newTab = null;
+                            try {
+                                const baseUrl = parentWindow.location.href.split('?')[0];
+                                const targetUrl = baseUrl + '?results=' + encodeURIComponent(encodedPayload);
+                                newTab = window.open(targetUrl, '_blank');
+                            } catch (popupError) {
+                                logStep(`❌ Failed to open new tab: ${popupError.message}`);
+                            }
+                            if (newTab) {
+                                logStep('✅ Opened a new browser tab with the Quick Check results payload.');
+                                status.textContent = 'Results opened in a new tab. Review Quick Check there.';
+                            } else {
+                                logStep('❌ Unable to deliver results automatically. Use the local table above.');
+                                status.textContent = 'Results shown locally. (Allow pop-ups to open Streamlit tab automatically.)';
+                            }
                             analyzeBtn.disabled = false;
-                            status.textContent = 'Redirect blocked. See timeline.';
                         }
                     } else {
                         logStep('❌ Unable to access parent window. Please open Quick Check in a new tab.');
@@ -555,7 +644,12 @@ def render_quick_check():
     </html>
     """
 
-    component_value = st.components.v1.html(html_code, height=520, scrolling=True)
+    component_value = st.components.v1.html(
+        html_code,
+        height=520,
+        scrolling=True,
+        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox",
+    )
 
     if isinstance(component_value, dict):
         metadata_from_component = component_value.get("metadata")
