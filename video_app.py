@@ -170,6 +170,9 @@ def main():
         st.subheader("📤 File Upload Analysis")
         st.markdown("Upload video files directly from your computer.")
         
+        # Version indicator
+        st.caption("🔄 App Version: 2.0 (Sequential Processing Enabled)")
+        
         uploaded_files = st.file_uploader("Choose video files", accept_multiple_files=True, type=['mp4', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'webm', 'm4v'])
 
         if uploaded_files:
