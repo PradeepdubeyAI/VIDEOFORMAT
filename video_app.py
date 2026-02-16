@@ -136,8 +136,25 @@ def render_quick_check():
         <meta charset="utf-8" />
         <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
         <style>
-            body { font-family: sans-serif; padding: 10px; }
-            #fileInput { margin: 10px 0; }
+            body {
+                font-family: sans-serif;
+                padding: 16px;
+                background: #ffffff;
+                color: #1f2328;
+            }
+            #fileInputWrapper {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 12px;
+            }
+            #fileLabel {
+                font-weight: 600;
+            }
+            #fileInput {
+                margin: 0;
+            }
             #analyzeBtn {
                 background: #FF4B4B;
                 color: white;
@@ -145,7 +162,6 @@ def render_quick_check():
                 border: none;
                 border-radius: 4px;
                 cursor: pointer;
-                margin-left: 10px;
             }
             #analyzeBtn:disabled { background: #ccc; }
             #status { margin-top: 10px; color: #0066cc; font-weight: 500; }
@@ -153,83 +169,101 @@ def render_quick_check():
                 margin-top: 12px;
                 padding: 12px;
                 border: 1px solid #d0d7de;
-                <script>
-                    const timelineEntries = [];
-                    const fileInput = document.getElementById('fileInput');
-                    const analyzeBtn = document.getElementById('analyzeBtn');
-                    const status = document.getElementById('status');
-                    const debugLog = document.getElementById('debugLog');
-                    const TIMEOUT_MS = 45000;
-                    const CHUNK_SIZE = 4 * 1024 * 1024;
-                    const toMb = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
+                border-radius: 6px;
+                background: #f6f8fa;
+                font-size: 13px;
+                max-height: 220px;
+                overflow-y: auto;
+            }
+            #debugLog div { margin-bottom: 6px; }
+        </style>
+    </head>
+    <body>
+        <div id="fileInputWrapper">
+            <label id="fileLabel" for="fileInput">Select MP4/MOV files:</label>
+            <input type="file" id="fileInput" multiple accept="video/*,.mp4,.mov,.m4v">
+            <button id="analyzeBtn">Analyze</button>
+        </div>
+        <div id="status"></div>
+        <div id="debugLog"><strong>Debug Timeline</strong></div>
 
-                    let streamlitId = null;
-                    let postMessageErrorLogged = false;
+        <script>
+            const timelineEntries = [];
+            const fileInput = document.getElementById('fileInput');
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            const status = document.getElementById('status');
+            const debugLog = document.getElementById('debugLog');
+            const TIMEOUT_MS = 45000;
+            const CHUNK_SIZE = 4 * 1024 * 1024;
+            const toMb = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
 
-                    const postToStreamlit = (type, data = {}) => {
-                        if (streamlitId === null) {
-                            return false;
-                        }
-                        try {
-                            window.parent.postMessage({ type, id: streamlitId, ...data }, '*');
-                            return true;
-                        } catch (error) {
-                            if (!postMessageErrorLogged) {
-                                postMessageErrorLogged = true;
-                                logStep(`⚠️ postMessage to parent failed: ${error.message}`);
-                            }
-                            return false;
-                        }
-                    };
+            let streamlitId = null;
+            let postMessageErrorLogged = false;
 
-                    const updateFrameHeight = () => {
-                        if (streamlitId !== null) {
-                            postToStreamlit('streamlit:setFrameHeight', { height: document.body.scrollHeight });
-                        }
-                    };
+            const logStep = (message) => {
+                timelineEntries.push(message);
+                const entry = document.createElement('div');
+                entry.textContent = message;
+                debugLog.appendChild(entry);
+                updateFrameHeight();
+            };
 
-                    const logStep = (message) => {
-                        timelineEntries.push(message);
-                        const entry = document.createElement('div');
-                        entry.textContent = message;
-                        debugLog.appendChild(entry);
-                        updateFrameHeight();
-                    };
+            const postToStreamlit = (type, data = {}) => {
+                if (streamlitId === null) {
+                    return false;
+                }
+                try {
+                    window.parent.postMessage({ type, id: streamlitId, ...data }, '*');
+                    return true;
+                } catch (error) {
+                    if (!postMessageErrorLogged) {
+                        postMessageErrorLogged = true;
+                        logStep(`⚠️ postMessage to parent failed: ${error.message}`);
+                    }
+                    return false;
+                }
+            };
 
-                    const setComponentReady = () => {
-                        postToStreamlit('streamlit:setComponentReady');
-                    };
+            const updateFrameHeight = () => {
+                if (streamlitId !== null) {
+                    postToStreamlit('streamlit:setFrameHeight', { height: document.body.scrollHeight });
+                }
+            };
 
-                    const sendComponentValue = (value) => {
-                        if (streamlitId === null) {
-                            logStep('⚠️ Cannot send results to Streamlit yet (no component id).');
-                            return false;
-                        }
-                        return postToStreamlit('streamlit:setComponentValue', { value });
-                    };
+            const setComponentReady = () => {
+                postToStreamlit('streamlit:setComponentReady');
+            };
 
-                    window.addEventListener('message', (event) => {
-                        const data = event.data;
-                        if (!data || !data.type) {
-                            return;
-                        }
-                        if (data.type === 'streamlit:render') {
-                            streamlitId = data.id;
-                            logStep(`✅ Connected to Streamlit (component id: ${streamlitId}).`);
-                            if (data.args && Object.keys(data.args).length > 0) {
-                                logStep(`Received args: ${JSON.stringify(data.args)}`);
-                            }
-                            setComponentReady();
-                            updateFrameHeight();
-                        }
-                    });
+            const sendComponentValue = (value) => {
+                if (streamlitId === null) {
+                    logStep('⚠️ Cannot send results to Streamlit yet (no component id).');
+                    return false;
+                }
+                return postToStreamlit('streamlit:setComponentValue', { value });
+            };
 
-                    window.addEventListener('load', () => {
-                        logStep('Component loaded. Waiting for Streamlit render event...');
-                        updateFrameHeight();
-                    });
+            window.addEventListener('message', (event) => {
+                const data = event.data;
+                if (!data || !data.type) {
+                    return;
+                }
+                if (data.type === 'streamlit:render') {
+                    streamlitId = data.id;
+                    logStep(`✅ Connected to Streamlit (component id: ${streamlitId}).`);
+                    if (data.args && Object.keys(data.args).length > 0) {
+                        logStep(`Received args: ${JSON.stringify(data.args)}`);
+                    }
+                    setComponentReady();
+                    updateFrameHeight();
+                }
+            });
 
-                    analyzeBtn.addEventListener('click', async () => {
+            window.addEventListener('load', () => {
+                logStep('Component loaded. Waiting for Streamlit render event...');
+                updateFrameHeight();
+            });
+
+            analyzeBtn.addEventListener('click', async () => {
                 const files = fileInput.files;
                 if (files.length === 0) {
                     alert('Please select video files first');
@@ -467,7 +501,7 @@ def render_quick_check():
     </html>
     """
 
-    component_value = st.components.v1.html(html_code, height=420, scrolling=True)
+    component_value = st.components.v1.html(html_code, height=520, scrolling=True)
 
     if isinstance(component_value, dict):
         metadata_from_component = component_value.get("metadata")
