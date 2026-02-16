@@ -439,7 +439,7 @@ def render_quick_check():
                 const table = document.createElement('table');
                 table.id = 'resultsTable';
                 const headerRow = document.createElement('tr');
-                ['File Name', 'Format', 'Video Codec', 'Audio Codec', 'Size (MB)', 'Status', 'Conditions'].forEach((label) => {
+                ['File Name', 'Video Format', 'Video Format Flag', 'Video Codecs', 'Video Codecs Flag', 'File Size', 'File Size Flag'].forEach((label) => {
                     const th = document.createElement('th');
                     th.textContent = label;
                     headerRow.appendChild(th);
@@ -453,19 +453,19 @@ def render_quick_check():
                     const cells = [
                         item.fileName || 'unknown',
                         item.format || 'unknown',
-                        item.videoCodec || 'unknown',
-                        item.audioCodec || 'unknown',
-                        safeSize.toFixed(2),
-                        validation.status,
-                        validation.conditions
+                        validation.formatFlag,
+                        `Video: ${item.videoCodec || 'unknown'}, Audio: ${item.audioCodec || 'unknown'}`,
+                        validation.codecFlag,
+                        safeSize.toFixed(2) + ' MB',
+                        validation.sizeFlag
                     ];
                     cells.forEach((value, index) => {
                         const td = document.createElement('td');
                         td.textContent = value;
-                        if (index === 5 && value.includes('⚠️')) {
+                        if ([2, 4, 6].includes(index) && value === 'error') {
                             td.style.color = '#d73a49';
                             td.style.fontWeight = '600';
-                        } else if (index === 5 && value === 'Good to Go') {
+                        } else if ([2, 4, 6].includes(index) && value === 'good to go') {
                             td.style.color = '#28a745';
                             td.style.fontWeight = '600';
                         }
@@ -478,28 +478,18 @@ def render_quick_check():
             };
 
             const validateFile = (item) => {
-                const issues = [];
                 const sizeMB = (item.size || 0) / (1024 * 1024);
                 
                 const validFormats = ['mp4', 'mov'];
-                if (!validFormats.includes((item.format || '').toLowerCase())) {
-                    issues.push('Format not MP4/MOV');
-                }
+                const formatFlag = validFormats.includes((item.format || '').toLowerCase()) ? 'good to go' : 'error';
                 
                 const validCodecs = ['h264', 'avc', 'hevc', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2'];
                 const videoCodec = (item.videoCodec || '').toLowerCase();
-                if (!validCodecs.includes(videoCodec)) {
-                    issues.push('Video codec not supported');
-                }
+                const codecFlag = validCodecs.includes(videoCodec) ? 'good to go' : 'error';
                 
-                if (sizeMB > 200) {
-                    issues.push(`File size > 200 MB (${sizeMB.toFixed(2)} MB)`);
-                }
+                const sizeFlag = sizeMB <= 200 ? 'good to go' : 'error';
                 
-                const status = issues.length === 0 ? 'Good to Go' : '⚠️ Check Required';
-                const conditions = issues.length === 0 ? '-' : issues.join('; ');
-                
-                return { status, conditions };
+                return { formatFlag, codecFlag, sizeFlag };
             };
 
             const generateExcel = () => {
@@ -511,20 +501,20 @@ def render_quick_check():
                 logStep('Generating Excel file...');
                 
                 const worksheetData = [
-                    ['File Name', 'Format', 'Video Codec', 'Audio Codec', 'Size (MB)', 'Status', 'Conditions']
+                    ['File Name', 'Video Format', 'Video Format Flag', 'Video Codecs', 'Video Codecs Flag', 'File Size', 'File Size Flag']
                 ];
                 
                 lastMetadata.forEach((item) => {
-                    const sizeMB = ((item.size || 0) / (1024 * 1024)).toFixed(2);
+                    const sizeMB = ((item.size || 0) / (1024 * 1024)).toFixed(2) + ' MB';
                     const validation = validateFile(item);
                     worksheetData.push([
                         item.fileName || 'unknown',
                         item.format || 'unknown',
-                        item.videoCodec || 'unknown',
-                        item.audioCodec || 'unknown',
+                        validation.formatFlag,
+                        `Video: ${item.videoCodec || 'unknown'}, Audio: ${item.audioCodec || 'unknown'}`,
+                        validation.codecFlag,
                         sizeMB,
-                        validation.status,
-                        validation.conditions
+                        validation.sizeFlag
                     ]);
                 });
 
@@ -533,12 +523,12 @@ def render_quick_check():
                 
                 const colWidths = [
                     { wch: 50 },
-                    { wch: 10 },
                     { wch: 15 },
-                    { wch: 15 },
-                    { wch: 12 },
                     { wch: 18 },
-                    { wch: 50 }
+                    { wch: 35 },
+                    { wch: 18 },
+                    { wch: 15 },
+                    { wch: 15 }
                 ];
                 worksheet['!cols'] = colWidths;
 
@@ -569,12 +559,12 @@ def render_quick_check():
                             let fontColor = "000000";
                             let fontBold = false;
                             
-                            if (col === 5) {
-                                if (cellValue === 'Good to Go') {
+                            if ([2, 4, 6].includes(col)) {
+                                if (cellValue === 'good to go') {
                                     fillColor = "C6EFCE";
                                     fontColor = "006100";
                                     fontBold = true;
-                                } else if (cellValue && cellValue.includes('⚠️')) {
+                                } else if (cellValue === 'error') {
                                     fillColor = "FFC7CE";
                                     fontColor = "9C0006";
                                     fontBold = true;
@@ -584,7 +574,7 @@ def render_quick_check():
                             worksheet[cellAddress].s = {
                                 font: { bold: fontBold, color: { rgb: fontColor } },
                                 fill: { fgColor: { rgb: fillColor } },
-                                alignment: { vertical: "center", wrapText: col === 0 || col === 6 },
+                                alignment: { vertical: "center", wrapText: col === 0 || col === 3 },
                                 border: {
                                     top: { style: "thin", color: { rgb: "D3D3D3" } },
                                     bottom: { style: "thin", color: { rgb: "D3D3D3" } },
