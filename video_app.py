@@ -250,8 +250,12 @@ def render_quick_check():
                     const jsonStr = JSON.stringify(payload);
                     logStep(`JSON string length: ${jsonStr.length} characters.`);
 
-                    logStep('Base64 encoding...');
-                    const encodedPayload = btoa(jsonStr);
+                    logStep('Base64 encoding (UTF-8 safe)...');
+                    // Convert to UTF-8 bytes then base64 encode
+                    const utf8Bytes = encodeURIComponent(jsonStr).replace(/%([0-9A-F]{2})/g, (_, p1) => {
+                        return String.fromCharCode(parseInt(p1, 16));
+                    });
+                    const encodedPayload = btoa(utf8Bytes);
                     logStep(`Encoded payload size (base64): ${encodedPayload.length} characters.`);
 
                     const Streamlit = getStreamlit();
