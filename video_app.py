@@ -187,6 +187,7 @@ def main():
             <html>
             <head>
                 <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
+                <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.0.0/dist/streamlit-component-lib.js"></script>
                 <style>
                     body { font-family: sans-serif; padding: 20px; }
                     .upload-box { border: 2px dashed #ccc; padding: 40px; text-align: center; margin: 20px 0; border-radius: 10px; }
@@ -212,6 +213,7 @@ def main():
 
                 <script>
                     let selectedFiles = [];
+                    const Streamlit = window.parent.Streamlit;
                     
                     document.getElementById('fileInput').addEventListener('change', function(e) {
                         selectedFiles = Array.from(e.target.files);
@@ -336,10 +338,14 @@ def main():
                         progressDiv.innerHTML = '<p>✅ Analysis complete! Sending results...</p>';
                         
                         // Send results to Streamlit
-                        window.parent.postMessage({
-                            type: 'streamlit:setComponentValue',
-                            value: JSON.stringify(results)
-                        }, '*');
+                        if (window.parent.Streamlit) {
+                            window.parent.Streamlit.setComponentValue(JSON.stringify(results));
+                        } else {
+                            window.parent.postMessage({
+                                type: 'streamlit:setComponentValue',
+                                value: JSON.stringify(results)
+                            }, '*');
+                        }
                         
                         resultsDiv.innerHTML = `<div class="result">✅ Successfully analyzed ${results.length} files. Results sent to server for validation.</div>`;
                         analyzeBtn.disabled = false;
@@ -349,13 +355,13 @@ def main():
             </html>
             """
             
-            # Render the component
-            metadata_json = components.html(html_component, height=400, scrolling=True)
+            # Render the component and get return value (with key for state management)
+            component_value = components.html(html_component, height=400, scrolling=True, key="video_analyzer")
             
             # Process results when received from JavaScript
-            if metadata_json:
+            if component_value and isinstance(component_value, str):
                 try:
-                    metadata_list = json.loads(metadata_json)
+                    metadata_list = json.loads(component_value)
                     st.success(f"✅ Received metadata for {len(metadata_list)} files!")
                     
                     # Valid Formats and Codecs
