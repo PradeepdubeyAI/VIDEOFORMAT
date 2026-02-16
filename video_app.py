@@ -199,6 +199,9 @@ def render_quick_check():
 
             let streamlitId = null;
             let postMessageErrorLogged = false;
+            let streamlitBridge = null;
+            let bridgePollAttempts = 0;
+            const BRIDGE_POLL_MAX = 40;
 
             const logStep = (message) => {
                 timelineEntries.push(message);
@@ -225,16 +228,32 @@ def render_quick_check():
             };
 
             const updateFrameHeight = () => {
+                if (streamlitBridge && streamlitBridge.setFrameHeight) {
+                    streamlitBridge.setFrameHeight(document.body.scrollHeight);
+                    return;
+                }
                 if (streamlitId !== null) {
                     postToStreamlit('streamlit:setFrameHeight', { height: document.body.scrollHeight });
                 }
             };
 
             const setComponentReady = () => {
-                postToStreamlit('streamlit:setComponentReady');
+                if (streamlitBridge && streamlitBridge.setComponentReady) {
+                    streamlitBridge.setComponentReady();
+                } else {
+                    postToStreamlit('streamlit:setComponentReady');
+                }
             };
 
             const sendComponentValue = (value) => {
+                if (streamlitBridge && streamlitBridge.setComponentValue) {
+                    try {
+                        streamlitBridge.setComponentValue(value);
+                        return true;
+                    } catch (error) {
+                        logStep(`⚠️ setComponentValue via bridge failed: ${error.message}`);
+                    }
+                }
                 if (streamlitId === null) {
                     logStep('⚠️ Cannot send results to Streamlit yet (no component id).');
                     return false;
@@ -258,8 +277,43 @@ def render_quick_check():
                 }
             });
 
+            const pollStreamlitBridge = () => {
+                if (streamlitBridge) {
+                    return;
+                }
+                bridgePollAttempts += 1;
+                try {
+                    const candidate = window.parent && window.parent.Streamlit;
+                    if (candidate) {
+                        streamlitBridge = candidate;
+                        logStep('✅ Detected window.parent.Streamlit bridge.');
+                        if (streamlitBridge.setFrameHeight) {
+                            streamlitBridge.setFrameHeight(document.body.scrollHeight);
+                        }
+                        if (streamlitBridge.setComponentReady) {
+                            streamlitBridge.setComponentReady();
+                        }
+                        return;
+                    }
+                } catch (error) {
+                    logStep(`⚠️ Accessing parent Streamlit threw: ${error.message}`);
+                }
+                if (bridgePollAttempts >= BRIDGE_POLL_MAX) {
+                    logStep('⚠️ Streamlit bridge not detected after polling. Using postMessage fallback only.');
+                    clearInterval(bridgePollInterval);
+                }
+            };
+
+            const bridgePollInterval = setInterval(() => {
+                pollStreamlitBridge();
+                if (streamlitBridge) {
+                    clearInterval(bridgePollInterval);
+                }
+            }, 250);
+
             window.addEventListener('load', () => {
                 logStep('Component loaded. Waiting for Streamlit render event...');
+                pollStreamlitBridge();
                 updateFrameHeight();
             });
 
