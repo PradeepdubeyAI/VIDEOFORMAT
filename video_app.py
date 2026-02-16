@@ -180,307 +180,246 @@ def main():
         st.markdown("---")
         
         if processing_method == "Quick Check (Client-side - Browser only)":
-            st.info("🚀 Files stay in your browser - no upload to server. Works with MP4/MOV files.")
+            st.info("🚀 Quick Check: Files analyzed in your browser without uploading. Works with MP4/MOV files.")
             
-            # Initialize session state
-            if 'quick_check_results' not in st.session_state:
-                st.session_state.quick_check_results = None
+            # Check if we have results from query parameters
+            results_param = st.query_params.get("results")
             
-            # Test if component communication works at all
-            test_component = """
-            <!DOCTYPE html>
-            <html>
-            <body>
-                <button onclick="sendTest()">Test Communication</button>
-                <script>
-                    function sendTest() {
-                        const testData = [{"test": "hello", "number": 123}];
-                        window.parent.postMessage({
-                            isStreamlitMessage: true,
-                            type: 'streamlit:setComponentValue',
-                            value: testData
-                        }, '*');
-                    }
-                    // Auto-send on load to test
-                    window.addEventListener('load', () => {
-                        setTimeout(() => {
-                            window.parent.postMessage({
-                                isStreamlitMessage: true,
-                                type: 'streamlit:setComponentValue',
-                                value: [{"autoTest": "loaded", "time": Date.now()}]
-                            }, '*');
-                        }, 1000);
-                    });
-                </script>
-            </body>
-            </html>
-            """
+            if results_param:
+                # Decode results from URL
+                import json
+                import base64
+                try:
+                    decoded = base64.b64decode(results_param).decode('utf-8')
+                    metadata_list = json.loads(decoded)
+                    
+                    st.success(f"✅ Quick Check completed for {len(metadata_list)} files!")
+                    
+                    # Valid Formats and Codecs
+                    valid_formats = ['mp4', 'mov']
+                    valid_codecs = ['h264', 'avc', 'hevc', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2']
+                    
+                    results = []
+                    for item in metadata_list:
+                        file_name = item['fileName']
+                        fmt = item['format']
+                        v_codec = item['videoCodec']
+                        a_codec = item['audioCodec']
+                        file_size_bytes = item['size']
+                        file_size_mb = file_size_bytes / (1024 * 1024)
+                        
+                        # Validation
+                        format_flag = "good to go" if fmt.lower() in valid_formats else "error"
+                        codec_flag = "good to go" if v_codec.lower() in valid_codecs else "error"
+                        size_flag = "good to go" if file_size_mb <= 200 else "error"
+                        
+                        results.append({
+                            "File Name": file_name,
+                            "Video Format": fmt,
+                            "Video Format Flag": format_flag,
+                            "Video Codecs": f"Video: {v_codec}, Audio: {a_codec}",
+                            "Video Codecs Flag": codec_flag,
+                            "File Size": f"{file_size_mb:.2f} MB",
+                            "File Size Flag": size_flag
+                        })
+                    
+                    df = pd.DataFrame(results)
+                    st.dataframe(df, width="stretch")
+                    
+                    # Excel Export
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df.to_excel(writer, index=False, sheet_name='Video Metadata')
+                    processed_data = output.getvalue()
+                    
+                    st.download_button(
+                        label="📥 Download Excel Report",
+                        data=processed_data,
+                        file_name="video_metadata_quick_check.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    
+                    # Button to analyze new files
+                    if st.button("🔄 Analyze New Files"):
+                        st.query_params.clear()
+                        st.rerun()
+                        
+                except Exception as e:
+                    st.error(f"Error decoding results: {e}")
+                    if st.button("Try Again"):
+                        st.query_params.clear()
+                        st.rerun()
             
-            test_value = st.components.v1.html(test_component, height=100)
-            st.write(f"Test component returned: {test_value}")
-            st.write(f"Test type: {type(test_value)}")
-            
-            if test_value and isinstance(test_value, list):
-                st.success(f"✅ Component communication WORKS! Got: {test_value}")
             else:
-                st.error("❌ Component communication not working with st.components.v1.html()")
-                st.info("💡 Switching to Standard Upload mode for reliability, or we need a different approach.")
-            
-            st.stop()  # Stop here for debugging
-            
-            # Minimal client-side HTML component
-            html_code = """
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
-                <script>
-                    // Streamlit component communication
-                    const Streamlit = {
-                        setComponentValue: function(value) {
-                            window.parent.postMessage({
-                                isStreamlitMessage: true,
-                                type: 'streamlit:setComponentValue',
-                                value: value
-                            }, '*');
-                        },
-                        setComponentReady: function() {
-                            window.parent.postMessage({
-                                isStreamlitMessage: true,
-                                type: 'streamlit:componentReady',
-                                apiVersion: 1
-                            }, '*');
+                # Show the file picker component
+                html_code = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
+                    <style>
+                        body { font-family: sans-serif; padding: 10px; }
+                        #fileInput { margin: 10px 0; }
+                        #analyzeBtn { 
+                            background: #FF4B4B; 
+                            color: white; 
+                            padding: 8px 20px; 
+                            border: none; 
+                            border-radius: 4px; 
+                            cursor: pointer;
+                            margin-left: 10px;
                         }
-                    };
+                        #analyzeBtn:disabled { background: #ccc; }
+                        #status { margin-top: 10px; color: #0066cc; font-weight: 500; }
+                    </style>
+                </head>
+                <body>
+                    <input type="file" id="fileInput" multiple accept="video/*,.mp4,.mov,.m4v">
+                    <button id="analyzeBtn">Analyze</button>
+                    <div id="status"></div>
                     
-                    // Signal that component is ready
-                    window.addEventListener('load', () => {
-                        Streamlit.setComponentReady();
-                    });
-                </script>
-                <style>
-                    body { font-family: sans-serif; padding: 10px; }
-                    #fileInput { margin: 10px 0; }
-                    #analyzeBtn { 
-                        background: #FF4B4B; 
-                        color: white; 
-                        padding: 8px 20px; 
-                        border: none; 
-                        border-radius: 4px; 
-                        cursor: pointer;
-                        margin-left: 10px;
-                    }
-                    #analyzeBtn:disabled { background: #ccc; }
-                    #status { margin-top: 10px; color: #0066cc; font-weight: 500; }
-                </style>
-            </head>
-            <body>
-                <input type="file" id="fileInput" multiple accept="video/*,.mp4,.mov,.m4v">
-                <button id="analyzeBtn">Analyze</button>
-                <div id="status"></div>
-                
-                <script>
-                    const fileInput = document.getElementById('fileInput');
-                    const analyzeBtn = document.getElementById('analyzeBtn');
-                    const status = document.getElementById('status');
-                    const TIMEOUT_MS = 5000;
-                    
-                    analyzeBtn.addEventListener('click', async () => {
-                        const files = fileInput.files;
-                        if (files.length === 0) {
-                            alert('Please select video files first');
-                            return;
-                        }
+                    <script>
+                        const fileInput = document.getElementById('fileInput');
+                        const analyzeBtn = document.getElementById('analyzeBtn');
+                        const status = document.getElementById('status');
+                        const TIMEOUT_MS = 5000;
                         
-                        analyzeBtn.disabled = true;
-                        status.textContent = `Analyzing ${files.length} file(s)...`;
-                        
-                        const metadata = [];
-                        
-                        for (let i = 0; i < files.length; i++) {
-                            const file = files[i];
-                            status.textContent = `Processing ${i + 1}/${files.length}: ${file.name}`;
-                            
-                            try {
-                                const data = await Promise.race([
-                                    analyzeFile(file),
-                                    timeout(TIMEOUT_MS)
-                                ]);
-                                metadata.push(data);
-                            } catch (error) {
-                                console.error(`Error processing ${file.name}:`, error);
-                                metadata.push({
-                                    fileName: file.name,
-                                    format: 'error',
-                                    videoCodec: 'error',
-                                    audioCodec: error.message || 'timeout',
-                                    size: file.size
-                                });
-                            }
-                        }
-                        
-                        // Send results back to Streamlit
-                        status.textContent = 'Complete!';
-                        Streamlit.setComponentValue(metadata);
-                    });
-                    
-                    function timeout(ms) {
-                        return new Promise((_, reject) => 
-                            setTimeout(() => reject(new Error('Processing timeout')), ms)
-                        );
-                    }
-                    
-                    async function analyzeFile(file) {
-                        return new Promise((resolve, reject) => {
-                            const ext = file.name.split('.').pop().toLowerCase();
-                            
-                            // Non-MP4/MOV files
-                            if (!['mp4', 'mov', 'm4v'].includes(ext)) {
-                                resolve({
-                                    fileName: file.name,
-                                    format: ext,
-                                    videoCodec: 'N/A',
-                                    audioCodec: 'N/A',
-                                    size: file.size
-                                });
+                        analyzeBtn.addEventListener('click', async () => {
+                            const files = fileInput.files;
+                            if (files.length === 0) {
+                                alert('Please select video files first');
                                 return;
                             }
                             
-                            const reader = new FileReader();
-                            reader.onload = (e) => {
-                                try {
-                                    const buffer = e.target.result;
-                                    const mp4boxfile = MP4Box.createFile();
-                                    let resolved = false;
-                                    
-                                    mp4boxfile.onError = (err) => {
-                                        if (!resolved) {
-                                            resolved = true;
-                                            reject(new Error('MP4Box parse error'));
-                                        }
-                                    };
-                                    
-                                    mp4boxfile.onReady = (info) => {
-                                        if (resolved) return;
-                                        resolved = true;
-                                        
-                                        // Extract format
-                                        let format = info.brand || 'mp4';
-                                        if (format.includes('qt')) format = 'mov';
-                                        else if (format.includes('mp4') || format.includes('isom')) format = 'mp4';
-                                        
-                                        // Extract video codec
-                                        let videoCodec = 'unknown';
-                                        const videoTrack = info.videoTracks[0];
-                                        if (videoTrack) {
-                                            const codec = videoTrack.codec;
-                                            if (codec.includes('avc') || codec.includes('h264')) videoCodec = 'h264';
-                                            else if (codec.includes('hvc') || codec.includes('hev') || codec.includes('h265')) videoCodec = 'hevc';
-                                            else videoCodec = codec;
-                                        }
-                                        
-                                        // Extract audio codec
-                                        let audioCodec = 'none';
-                                        const audioTrack = info.audioTracks[0];
-                                        if (audioTrack) {
-                                            const codec = audioTrack.codec;
-                                            if (codec.includes('mp4a')) audioCodec = 'aac';
-                                            else audioCodec = codec;
-                                        }
-                                        
-                                        resolve({
-                                            fileName: file.name,
-                                            format: format,
-                                            videoCodec: videoCodec,
-                                            audioCodec: audioCodec,
-                                            size: file.size
-                                        });
-                                    };
-                                    
-                                    buffer.fileStart = 0;
-                                    mp4boxfile.appendBuffer(buffer);
-                                    mp4boxfile.flush();
-                                    
-                                } catch (error) {
-                                    reject(error);
-                                }
-                            };
+                            analyzeBtn.disabled = true;
+                            status.textContent = `Analyzing ${files.length} file(s)...`;
                             
-                            reader.onerror = () => reject(new Error('File read error'));
-                            reader.readAsArrayBuffer(file.slice(0, 1024 * 1024)); // Read first 1MB
+                            const metadata = [];
+                            
+                            for (let i = 0; i < files.length; i++) {
+                                const file = files[i];
+                                status.textContent = `Processing ${i + 1}/${files.length}: ${file.name}`;
+                                
+                                try {
+                                    const data = await Promise.race([
+                                        analyzeFile(file),
+                                        timeout(TIMEOUT_MS)
+                                    ]);
+                                    metadata.push(data);
+                                } catch (error) {
+                                    console.error(`Error processing ${file.name}:`, error);
+                                    metadata.push({
+                                        fileName: file.name,
+                                        format: 'error',
+                                        videoCodec: 'error',
+                                        audioCodec: error.message || 'timeout',
+                                        size: file.size
+                                    });
+                                }
+                            }
+                            
+                            // Encode results and redirect
+                            status.textContent = 'Complete! Redirecting...';
+                            const jsonStr = JSON.stringify(metadata);
+                            const base64Data = btoa(jsonStr);
+                            
+                            // Redirect to same page with results in query params
+                            const currentUrl = window.location.href.split('?')[0];
+                            window.location.href = currentUrl + '?results=' + encodeURIComponent(base64Data);
                         });
-                    }
-                </script>
-            </body>
-            </html>
-            """
-            
-            # Display the component
-            component_value = st.components.v1.html(html_code, height=120, scrolling=False)
-            
-            # Debug
-            st.write(f"Type: {type(component_value)}")
-            if component_value is not None:
-                st.write(f"Value received: {component_value}")
-            
-            # Check if component returned data
-            if component_value is not None and isinstance(component_value, list):
-                st.session_state.quick_check_results = component_value
-                st.write("✅ Data received and saved!")
-            
-            # Display results if we have them in session state
-            if st.session_state.quick_check_results and isinstance(st.session_state.quick_check_results, list) and len(st.session_state.quick_check_results) > 0:
-                results_data = st.session_state.quick_check_results
-                st.success(f"✅ Quick Check completed for {len(results_data)} files!")
+                        
+                        function timeout(ms) {
+                            return new Promise((_, reject) => 
+                                setTimeout(() => reject(new Error('Processing timeout')), ms)
+                            );
+                        }
+                        
+                        async function analyzeFile(file) {
+                            return new Promise((resolve, reject) => {
+                                const ext = file.name.split('.').pop().toLowerCase();
+                                
+                                // Non-MP4/MOV files
+                                if (!['mp4', 'mov', 'm4v'].includes(ext)) {
+                                    resolve({
+                                        fileName: file.name,
+                                        format: ext,
+                                        videoCodec: 'N/A',
+                                        audioCodec: 'N/A',
+                                        size: file.size
+                                    });
+                                    return;
+                                }
+                                
+                                const reader = new FileReader();
+                                reader.onload = (e) => {
+                                    try {
+                                        const buffer = e.target.result;
+                                        const mp4boxfile = MP4Box.createFile();
+                                        let resolved = false;
+                                        
+                                        mp4boxfile.onError = (err) => {
+                                            if (!resolved) {
+                                                resolved = true;
+                                                reject(new Error('MP4Box parse error'));
+                                            }
+                                        };
+                                        
+                                        mp4boxfile.onReady = (info) => {
+                                            if (resolved) return;
+                                            resolved = true;
+                                            
+                                            // Extract format
+                                            let format = info.brand || 'mp4';
+                                            if (format.includes('qt')) format = 'mov';
+                                            else if (format.includes('mp4') || format.includes('isom')) format = 'mp4';
+                                            
+                                            // Extract video codec
+                                            let videoCodec = 'unknown';
+                                            const videoTrack = info.videoTracks[0];
+                                            if (videoTrack) {
+                                                const codec = videoTrack.codec;
+                                                if (codec.includes('avc') || codec.includes('h264')) videoCodec = 'h264';
+                                                else if (codec.includes('hvc') || codec.includes('hev') || codec.includes('h265')) videoCodec = 'hevc';
+                                                else videoCodec = codec;
+                                            }
+                                            
+                                            // Extract audio codec
+                                            let audioCodec = 'none';
+                                            const audioTrack = info.audioTracks[0];
+                                            if (audioTrack) {
+                                                const codec = audioTrack.codec;
+                                                if (codec.includes('mp4a')) audioCodec = 'aac';
+                                                else audioCodec = codec;
+                                            }
+                                            
+                                            resolve({
+                                                fileName: file.name,
+                                                format: format,
+                                                videoCodec: videoCodec,
+                                                audioCodec: audioCodec,
+                                                size: file.size
+                                            });
+                                        };
+                                        
+                                        buffer.fileStart = 0;
+                                        mp4boxfile.appendBuffer(buffer);
+                                        mp4boxfile.flush();
+                                        
+                                    } catch (error) {
+                                        reject(error);
+                                    }
+                                };
+                                
+                                reader.onerror = () => reject(new Error('File read error'));
+                                reader.readAsArrayBuffer(file.slice(0, 1024 * 1024));
+                            });
+                        }
+                    </script>
+                </body>
+                </html>
+                """
                 
-                # Valid Formats and Codecs
-                valid_formats = ['mp4', 'mov']
-                valid_codecs = ['h264', 'avc', 'hevc', 'h265', 'mpeg1video', 'mpeg2video', 'mpeg1', 'mpeg2']
-                
-                results = []
-                for item in results_data:
-                    file_name = item['fileName']
-                    fmt = item['format']
-                    v_codec = item['videoCodec']
-                    a_codec = item['audioCodec']
-                    file_size_bytes = item['size']
-                    file_size_mb = file_size_bytes / (1024 * 1024)
-                    
-                    # Validation
-                    format_flag = "good to go" if fmt.lower() in valid_formats else "error"
-                    codec_flag = "good to go" if v_codec.lower() in valid_codecs else "error"
-                    size_flag = "good to go" if file_size_mb <= 200 else "error"
-                    
-                    results.append({
-                        "File Name": file_name,
-                        "Video Format": fmt,
-                        "Video Format Flag": format_flag,
-                        "Video Codecs": f"Video: {v_codec}, Audio: {a_codec}",
-                        "Video Codecs Flag": codec_flag,
-                        "File Size": f"{file_size_mb:.2f} MB",
-                        "File Size Flag": size_flag
-                    })
-                
-                df = pd.DataFrame(results)
-                st.dataframe(df, width="stretch")
-                
-                # Excel Export
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df.to_excel(writer, index=False, sheet_name='Video Metadata')
-                processed_data = output.getvalue()
-                
-                st.download_button(
-                    label="📥 Download Excel Report",
-                    data=processed_data,
-                    file_name="video_metadata_quick_check.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-                
-                # Add button to clear results and analyze new files
-                if st.button("🔄 Analyze New Files"):
-                    st.session_state.quick_check_results = None
-                    st.rerun()
+                st.components.v1.html(html_code, height=120, scrolling=False)
         
         else:
             # Standard Upload Mode - uses Streamlit's uploader
