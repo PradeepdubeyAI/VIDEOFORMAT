@@ -176,7 +176,9 @@ def render_quick_check():
             const analyzeBtn = document.getElementById('analyzeBtn');
             const status = document.getElementById('status');
             const debugLog = document.getElementById('debugLog');
-            const TIMEOUT_MS = 5000;
+            const TIMEOUT_MS = 45000;
+            const CHUNK_SIZE = 4 * 1024 * 1024;
+            const toMb = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
 
             const updateFrameHeight = () => {
                 const Streamlit = getStreamlit();
@@ -220,10 +222,7 @@ def render_quick_check():
                     logStep(`Processing file ${i + 1}: ${file.name}`);
 
                     try {
-                        const data = await Promise.race([
-                            analyzeFile(file),
-                            timeout(TIMEOUT_MS)
-                        ]);
+                        const data = await analyzeFile(file);
                         metadata.push(data);
                     } catch (error) {
                         console.error(`Error processing ${file.name}:`, error);
@@ -250,20 +249,7 @@ def render_quick_check():
                 const encodedPayload = btoa(jsonStr);
                 logStep(`Encoded payload size (base64): ${encodedPayload.length} characters.`);
 
-                const Streamlit = getStreamlit();
-                if (Streamlit && Streamlit.setComponentValue) {
-                    logStep('Sending results to Streamlit parent via component bridge...');
-                    Streamlit.setComponentValue({
-                        metadata: metadata,
-                        timeline: timelineEntries,
-                        payloadSize: encodedPayload.length
-                    });
-                    analyzeBtn.disabled = false;
-                    updateFrameHeight();
-                    return;
-                }
-
-                logStep('Component bridge unavailable. Attempting parent redirect...');
+                logStep('Attempting parent redirect with payload...');
                 const parentWindow = window.parent;
                 if (parentWindow && parentWindow.location) {
                     try {
@@ -277,12 +263,6 @@ def render_quick_check():
                     logStep('❌ Unable to access parent window. Please open Quick Check in a new tab.');
                 }
             });
-
-            function timeout(ms) {
-                return new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Processing timeout')), ms)
-                );
-            }
 
             async function analyzeFile(file) {
                 return new Promise((resolve, reject) => {
@@ -300,78 +280,127 @@ def render_quick_check():
                         return;
                     }
 
-                    const reader = new FileReader();
-                    reader.onload = (event) => {
-                        try {
-                            const buffer = event.target.result;
-                            const mp4boxfile = MP4Box.createFile();
-                            let resolved = false;
+                    let finished = false;
+                    let offset = 0;
+                    let chunkCount = 0;
+                    const chunkSizeMb = toMb(CHUNK_SIZE);
+                    const totalMb = toMb(file.size);
+                    logStep(`Chunked parser reading ${totalMb} MB in ${chunkSizeMb} MB chunks.`);
 
-                            mp4boxfile.onError = () => {
-                                if (!resolved) {
-                                    resolved = true;
-                                    logStep(`❌ MP4Box parse error on ${file.name}`);
-                                    reject(new Error('MP4Box parse error'));
-                                }
-                            };
+                    const mp4boxfile = MP4Box.createFile();
 
-                            mp4boxfile.onReady = (info) => {
-                                if (resolved) {
-                                    return;
-                                }
-                                resolved = true;
-
-                                let format = info.brand || 'mp4';
-                                if (format && format.includes('qt')) {
-                                    format = 'mov';
-                                } else if (format && (format.includes('mp4') || format.includes('isom'))) {
-                                    format = 'mp4';
-                                }
-
-                                let videoCodec = 'unknown';
-                                const videoTrack = info.videoTracks[0];
-                                if (videoTrack) {
-                                    const codec = videoTrack.codec || '';
-                                    if (codec.includes('avc') || codec.includes('h264')) {
-                                        videoCodec = 'h264';
-                                    } else if (codec.includes('hvc') || codec.includes('hev') || codec.includes('h265')) {
-                                        videoCodec = 'hevc';
-                                    } else {
-                                        videoCodec = codec || 'unknown';
-                                    }
-                                }
-
-                                let audioCodec = 'none';
-                                const audioTrack = info.audioTracks[0];
-                                if (audioTrack) {
-                                    const codec = audioTrack.codec || '';
-                                    if (codec.includes('mp4a')) {
-                                        audioCodec = 'aac';
-                                    } else {
-                                        audioCodec = codec || 'unknown';
-                                    }
-                                }
-
-                                resolve({
-                                    fileName: file.name,
-                                    format: format || 'mp4',
-                                    videoCodec: videoCodec,
-                                    audioCodec: audioCodec,
-                                    size: file.size
-                                });
-                                logStep(`✅ Parsed ${file.name} → format: ${format || 'mp4'}, video: ${videoCodec}, audio: ${audioCodec}`);
-                            };
-
-                            buffer.fileStart = 0;
-                            mp4boxfile.appendBuffer(buffer);
-                            mp4boxfile.flush();
-                        } catch (error) {
-                            reject(error);
-                        }
+                    const cleanup = () => {
+                        finished = true;
+                        clearTimeout(timerId);
                     };
 
-                    reader.onerror = () => reject(new Error('File read error'));
-                    reader.readAsArrayBuffer(file.slice(0, 1024 * 1024));
+                    mp4boxfile.onError = () => {
+                        if (finished) {
+                            return;
+                        }
+                        cleanup();
+                        logStep(`❌ MP4Box parse error on ${file.name}`);
+                        reject(new Error('MP4Box parse error'));
+                    };
+
+                    mp4boxfile.onReady = (info) => {
+                        if (finished) {
+                            return;
+                        }
+                        cleanup();
+
+                        let format = info.brand || 'mp4';
+                        if (format && format.includes('qt')) {
+                            format = 'mov';
+                        } else if (format && (format.includes('mp4') || format.includes('isom'))) {
+                            format = 'mp4';
+                        }
+
+                        let videoCodec = 'unknown';
+                        const videoTrack = info.videoTracks[0];
+                        if (videoTrack) {
+                            const codec = videoTrack.codec || '';
+                            if (codec.includes('avc') || codec.includes('h264')) {
+                                videoCodec = 'h264';
+                            } else if (codec.includes('hvc') || codec.includes('hev') || codec.includes('h265')) {
+                                videoCodec = 'hevc';
+                            } else {
+                                videoCodec = codec || 'unknown';
+                            }
+                        }
+
+                        let audioCodec = 'none';
+                        const audioTrack = info.audioTracks[0];
+                        if (audioTrack) {
+                            const codec = audioTrack.codec || '';
+                            if (codec.includes('mp4a')) {
+                                audioCodec = 'aac';
+                            } else {
+                                audioCodec = codec || 'unknown';
+                            }
+                        }
+
+                        logStep(`✅ Parsed ${file.name} → format: ${format || 'mp4'}, video: ${videoCodec}, audio: ${audioCodec}`);
+                        resolve({
+                            fileName: file.name,
+                            format: format || 'mp4',
+                            videoCodec: videoCodec,
+                            audioCodec: audioCodec,
+                            size: file.size
+                        });
+                    };
+
+                    const timerId = setTimeout(() => {
+                        if (finished) {
+                            return;
+                        }
+                        cleanup();
+                        reject(new Error('Processing timeout'));
+                    }, TIMEOUT_MS);
+
+                    const readNextChunk = () => {
+                        if (finished) {
+                            return;
+                        }
+                        if (offset >= file.size) {
+                            mp4boxfile.flush();
+                            return;
+                        }
+
+                        const slice = file.slice(offset, offset + CHUNK_SIZE);
+                        const reader = new FileReader();
+
+                        reader.onload = (event) => {
+                            if (finished) {
+                                return;
+                            }
+                            const arrayBuffer = event.target.result;
+                            arrayBuffer.fileStart = offset;
+                            offset += arrayBuffer.byteLength;
+                            chunkCount += 1;
+                            if (chunkCount === 1 || offset >= file.size || chunkCount % 5 === 0) {
+                                logStep(`Read chunk ${chunkCount} (${toMb(Math.min(offset, file.size))} of ${totalMb} MB).`);
+                            }
+                            mp4boxfile.appendBuffer(arrayBuffer);
+                            if (offset < file.size) {
+                                readNextChunk();
+                            } else {
+                                mp4boxfile.flush();
+                            }
+                        };
+
+                        reader.onerror = () => {
+                            if (finished) {
+                                return;
+                            }
+                            cleanup();
+                            reject(new Error('File read error'));
+                        };
+
+                        reader.readAsArrayBuffer(slice);
+                    };
+
+                    readNextChunk();
                 });
             }
         </script>
@@ -379,20 +408,7 @@ def render_quick_check():
     </html>
     """
 
-    component_value = st.components.v1.html(html_code, height=420, scrolling=True)
-
-    if isinstance(component_value, dict):
-        metadata_from_component = component_value.get("metadata")
-        if metadata_from_component:
-            metadata_list = metadata_from_component
-
-        timeline_return = component_value.get("timeline")
-        if isinstance(timeline_return, list):
-            timeline_entries = timeline_return
-
-        payload_size_value = component_value.get("payloadSize")
-        if isinstance(payload_size_value, int):
-            payload_size = payload_size_value
+    st.components.v1.html(html_code, height=420, scrolling=True)
 
     if metadata_list:
         st.write("---")
