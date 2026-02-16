@@ -135,6 +135,7 @@ def render_quick_check():
     <head>
         <meta charset="utf-8" />
         <script src="https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
         <style>
             body {
                 font-family: sans-serif;
@@ -164,6 +165,17 @@ def render_quick_check():
                 cursor: pointer;
             }
             #analyzeBtn:disabled { background: #ccc; }
+            #downloadBtn {
+                background: #28a745;
+                color: white;
+                padding: 8px 20px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                margin-left: 12px;
+                display: none;
+            }
+            #downloadBtn:hover { background: #218838; }
             #status { margin-top: 10px; color: #0066cc; font-weight: 500; }
             #debugLog {
                 margin-top: 12px;
@@ -205,6 +217,7 @@ def render_quick_check():
             <label id="fileLabel" for="fileInput">Select MP4/MOV files:</label>
             <input type="file" id="fileInput" multiple accept="video/*,.mp4,.mov,.m4v">
             <button id="analyzeBtn">Analyze</button>
+            <button id="downloadBtn">📥 Download Excel</button>
         </div>
         <div id="status"></div>
         <div id="debugLog"><strong>Debug Timeline</strong></div>
@@ -214,9 +227,11 @@ def render_quick_check():
             const timelineEntries = [];
             const fileInput = document.getElementById('fileInput');
             const analyzeBtn = document.getElementById('analyzeBtn');
+            const downloadBtn = document.getElementById('downloadBtn');
             const status = document.getElementById('status');
             const debugLog = document.getElementById('debugLog');
             const resultContainer = document.getElementById('resultContainer');
+            let lastMetadata = [];
             const TIMEOUT_MS = 45000;
             const CHUNK_SIZE = 4 * 1024 * 1024;
             const toMb = (bytes) => (bytes / (1024 * 1024)).toFixed(1);
@@ -452,6 +467,53 @@ def render_quick_check():
                 resultContainer.appendChild(table);
             };
 
+            const generateExcel = () => {
+                if (!lastMetadata || lastMetadata.length === 0) {
+                    alert('No data to download. Please analyze files first.');
+                    return;
+                }
+
+                logStep('Generating Excel file...');
+                
+                const worksheetData = [
+                    ['File Name', 'Format', 'Video Codec', 'Audio Codec', 'Size (MB)']
+                ];
+                
+                lastMetadata.forEach((item) => {
+                    const sizeMB = ((item.size || 0) / (1024 * 1024)).toFixed(2);
+                    worksheetData.push([
+                        item.fileName || 'unknown',
+                        item.format || 'unknown',
+                        item.videoCodec || 'unknown',
+                        item.audioCodec || 'unknown',
+                        sizeMB
+                    ]);
+                });
+
+                const workbook = XLSX.utils.book_new();
+                const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+                
+                const colWidths = [
+                    { wch: 50 },
+                    { wch: 10 },
+                    { wch: 15 },
+                    { wch: 15 },
+                    { wch: 12 }
+                ];
+                worksheet['!cols'] = colWidths;
+
+                XLSX.utils.book_append_sheet(workbook, worksheet, 'Video Metadata');
+
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                const filename = `video_metadata_${timestamp}.xlsx`;
+
+                XLSX.writeFile(workbook, filename);
+                logStep(`✅ Excel file downloaded: ${filename}`);
+                status.textContent = 'Excel file downloaded successfully!';
+            };
+
+            downloadBtn.addEventListener('click', generateExcel);
+
             analyzeBtn.addEventListener('click', async () => {
                 const files = fileInput.files;
                 if (files.length === 0) {
@@ -460,6 +522,8 @@ def render_quick_check():
                 }
 
                 analyzeBtn.disabled = true;
+                downloadBtn.style.display = 'none';
+                lastMetadata = [];
                 status.textContent = `Analyzing ${files.length} file(s)...`;
                 logStep(`Selected ${files.length} file(s). Starting analysis...`);
 
@@ -509,6 +573,10 @@ def render_quick_check():
 
                     logStep('Rendering local results preview in component...');
                     renderLocalResults(metadata);
+
+                    lastMetadata = metadata;
+                    downloadBtn.style.display = 'inline-block';
+                    logStep('✅ Excel download ready. Click the Download Excel button above.');
 
                     logStep('Attempting to send results to Streamlit parent via postMessage bridge...');
                     if (sendComponentValue({
