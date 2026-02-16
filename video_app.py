@@ -712,10 +712,6 @@ def render_quick_check():
         html_code,
         height=520,
         scrolling=True,
-        sandbox=(
-            "allow-scripts allow-same-origin allow-popups "
-            "allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
-        ),
     )
 
     if isinstance(component_value, dict):
