@@ -186,6 +186,48 @@ def main():
             if 'quick_check_results' not in st.session_state:
                 st.session_state.quick_check_results = None
             
+            # Test if component communication works at all
+            test_component = """
+            <!DOCTYPE html>
+            <html>
+            <body>
+                <button onclick="sendTest()">Test Communication</button>
+                <script>
+                    function sendTest() {
+                        const testData = [{"test": "hello", "number": 123}];
+                        window.parent.postMessage({
+                            isStreamlitMessage: true,
+                            type: 'streamlit:setComponentValue',
+                            value: testData
+                        }, '*');
+                    }
+                    // Auto-send on load to test
+                    window.addEventListener('load', () => {
+                        setTimeout(() => {
+                            window.parent.postMessage({
+                                isStreamlitMessage: true,
+                                type: 'streamlit:setComponentValue',
+                                value: [{"autoTest": "loaded", "time": Date.now()}]
+                            }, '*');
+                        }, 1000);
+                    });
+                </script>
+            </body>
+            </html>
+            """
+            
+            test_value = st.components.v1.html(test_component, height=100)
+            st.write(f"Test component returned: {test_value}")
+            st.write(f"Test type: {type(test_value)}")
+            
+            if test_value and isinstance(test_value, list):
+                st.success(f"✅ Component communication WORKS! Got: {test_value}")
+            else:
+                st.error("❌ Component communication not working with st.components.v1.html()")
+                st.info("💡 Switching to Standard Upload mode for reliability, or we need a different approach.")
+            
+            st.stop()  # Stop here for debugging
+            
             # Minimal client-side HTML component
             html_code = """
             <!DOCTYPE html>
