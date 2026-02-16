@@ -185,8 +185,6 @@ def main():
             # Initialize session state
             if 'quick_check_results' not in st.session_state:
                 st.session_state.quick_check_results = None
-            if 'component_key' not in st.session_state:
-                st.session_state.component_key = 0
             
             # Minimal client-side HTML component
             html_code = """
@@ -375,13 +373,8 @@ def main():
             </html>
             """
             
-            # Display the component with a unique key
-            component_value = st.components.v1.html(
-                html_code, 
-                height=120, 
-                scrolling=False,
-                key=f"quick_check_{st.session_state.component_key}"
-            )
+            # Display the component
+            component_value = st.components.v1.html(html_code, height=120, scrolling=False)
             
             # Debug
             st.write(f"Type: {type(component_value)}")
