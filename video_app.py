@@ -439,7 +439,7 @@ def render_quick_check():
                 const table = document.createElement('table');
                 table.id = 'resultsTable';
                 const headerRow = document.createElement('tr');
-                ['File Name', 'Format', 'Video Codec', 'Audio Codec', 'Size (MB)'].forEach((label) => {
+                ['File Name', 'Format', 'Video Codec', 'Audio Codec', 'Size (MB)', 'Status', 'Conditions'].forEach((label) => {
                     const th = document.createElement('th');
                     th.textContent = label;
                     headerRow.appendChild(th);
@@ -449,22 +449,60 @@ def render_quick_check():
                 rows.forEach((item) => {
                     const tr = document.createElement('tr');
                     const safeSize = (item.size || 0) / (1024 * 1024);
+                    const validation = validateFile(item);
                     const cells = [
                         item.fileName || 'unknown',
                         item.format || 'unknown',
                         item.videoCodec || 'unknown',
                         item.audioCodec || 'unknown',
-                        safeSize.toFixed(2)
+                        safeSize.toFixed(2),
+                        validation.status,
+                        validation.conditions
                     ];
-                    cells.forEach((value) => {
+                    cells.forEach((value, index) => {
                         const td = document.createElement('td');
                         td.textContent = value;
+                        if (index === 5 && value.includes('⚠️')) {
+                            td.style.color = '#d73a49';
+                            td.style.fontWeight = '600';
+                        } else if (index === 5 && value === 'Good to Go') {
+                            td.style.color = '#28a745';
+                            td.style.fontWeight = '600';
+                        }
                         tr.appendChild(td);
                     });
                     table.appendChild(tr);
                 });
 
                 resultContainer.appendChild(table);
+            };
+
+            const validateFile = (item) => {
+                const issues = [];
+                const sizeMB = (item.size || 0) / (1024 * 1024);
+                
+                if (!['mp4', 'mov'].includes((item.format || '').toLowerCase())) {
+                    issues.push('Format not MP4/MOV');
+                }
+                
+                const videoCodec = (item.videoCodec || '').toLowerCase();
+                if (!['h264', 'hevc'].includes(videoCodec)) {
+                    issues.push('Video codec not H.264/HEVC');
+                }
+                
+                const audioCodec = (item.audioCodec || '').toLowerCase();
+                if (audioCodec !== 'aac' && audioCodec !== 'none') {
+                    issues.push('Audio codec not AAC');
+                }
+                
+                if (sizeMB > 500) {
+                    issues.push(`File size > 500 MB (${sizeMB.toFixed(2)} MB)`);
+                }
+                
+                const status = issues.length === 0 ? 'Good to Go' : '⚠️ Check Required';
+                const conditions = issues.length === 0 ? '-' : issues.join('; ');
+                
+                return { status, conditions };
             };
 
             const generateExcel = () => {
@@ -476,17 +514,20 @@ def render_quick_check():
                 logStep('Generating Excel file...');
                 
                 const worksheetData = [
-                    ['File Name', 'Format', 'Video Codec', 'Audio Codec', 'Size (MB)']
+                    ['File Name', 'Format', 'Video Codec', 'Audio Codec', 'Size (MB)', 'Status', 'Conditions']
                 ];
                 
                 lastMetadata.forEach((item) => {
                     const sizeMB = ((item.size || 0) / (1024 * 1024)).toFixed(2);
+                    const validation = validateFile(item);
                     worksheetData.push([
                         item.fileName || 'unknown',
                         item.format || 'unknown',
                         item.videoCodec || 'unknown',
                         item.audioCodec || 'unknown',
-                        sizeMB
+                        sizeMB,
+                        validation.status,
+                        validation.conditions
                     ]);
                 });
 
@@ -498,7 +539,9 @@ def render_quick_check():
                     { wch: 10 },
                     { wch: 15 },
                     { wch: 15 },
-                    { wch: 12 }
+                    { wch: 12 },
+                    { wch: 18 },
+                    { wch: 50 }
                 ];
                 worksheet['!cols'] = colWidths;
 
