@@ -315,76 +315,76 @@ def render_quick_check():
                     status.textContent = `Analyzing ${files.length} file(s)...`;
                     logStep(`Selected ${files.length} file(s). Starting analysis...`);
 
-                const metadata = [];
+                    const metadata = [];
 
-                for (let i = 0; i < files.length; i++) {
-                    const file = files[i];
-                    status.textContent = `Processing ${i + 1}/${files.length}: ${file.name}`;
-                    logStep(`Processing file ${i + 1}: ${file.name}`);
+                    for (let i = 0; i < files.length; i++) {
+                        const file = files[i];
+                        status.textContent = `Processing ${i + 1}/${files.length}: ${file.name}`;
+                        logStep(`Processing file ${i + 1}: ${file.name}`);
+
+                        try {
+                            const data = await analyzeFile(file);
+                            metadata.push(data);
+                        } catch (error) {
+                            console.error(`Error processing ${file.name}:`, error);
+                            logStep(`⚠️ Error on ${file.name}: ${error.message}`);
+                            metadata.push({
+                                fileName: file.name,
+                                format: 'error',
+                                videoCodec: 'error',
+                                audioCodec: error.message || 'timeout',
+                                size: file.size
+                            });
+                        }
+                        }
+
+                    status.textContent = 'Complete! Returning results...';
+                    logStep(`Analysis complete. Preparing ${metadata.length} result(s) for return.`);
 
                     try {
-                        const data = await analyzeFile(file);
-                        metadata.push(data);
-                    } catch (error) {
-                        console.error(`Error processing ${file.name}:`, error);
-                        logStep(`⚠️ Error on ${file.name}: ${error.message}`);
-                        metadata.push({
-                            fileName: file.name,
-                            format: 'error',
-                            videoCodec: 'error',
-                            audioCodec: error.message || 'timeout',
-                            size: file.size
-                        });
-                    }
-                }
-
-                status.textContent = 'Complete! Returning results...';
-                logStep(`Analysis complete. Preparing ${metadata.length} result(s) for return.`);
-
-                try {
-                    logStep('Building payload object...');
-                    const payload = {
-                        metadata: metadata,
-                        timeline: timelineEntries
-                    };
-
-                    logStep('Stringifying payload...');
-                    const jsonStr = JSON.stringify(payload);
-                    logStep(`JSON string length: ${jsonStr.length} characters.`);
-
-                    logStep('Base64 encoding (UTF-8 safe)...');
-                    // Convert to UTF-8 bytes then base64 encode
-                    const utf8Bytes = encodeURIComponent(jsonStr).replace(/%([0-9A-F]{2})/g, (_, p1) => {
-                        return String.fromCharCode(parseInt(p1, 16));
-                    });
-                    const encodedPayload = btoa(utf8Bytes);
-                    logStep(`Encoded payload size (base64): ${encodedPayload.length} characters.`);
-
-                    const Streamlit = getStreamlit();
-                    if (Streamlit && Streamlit.setComponentValue) {
-                        logStep('Sending results to Streamlit parent via component bridge...');
-                        Streamlit.setComponentValue({
+                        logStep('Building payload object...');
+                        const payload = {
                             metadata: metadata,
-                            timeline: timelineEntries,
-                            payloadSize: encodedPayload.length
+                            timeline: timelineEntries
+                        };
+
+                        logStep('Stringifying payload...');
+                        const jsonStr = JSON.stringify(payload);
+                        logStep(`JSON string length: ${jsonStr.length} characters.`);
+
+                        logStep('Base64 encoding (UTF-8 safe)...');
+                        // Convert to UTF-8 bytes then base64 encode
+                        const utf8Bytes = encodeURIComponent(jsonStr).replace(/%([0-9A-F]{2})/g, (_, p1) => {
+                            return String.fromCharCode(parseInt(p1, 16));
                         });
-                        status.textContent = 'Results sent to Streamlit.';
+                        const encodedPayload = btoa(utf8Bytes);
+                        logStep(`Encoded payload size (base64): ${encodedPayload.length} characters.`);
+
+                        const Streamlit = getStreamlit();
+                        if (Streamlit && Streamlit.setComponentValue) {
+                            logStep('Sending results to Streamlit parent via component bridge...');
+                            Streamlit.setComponentValue({
+                                metadata: metadata,
+                                timeline: timelineEntries,
+                                payloadSize: encodedPayload.length
+                            });
+                            status.textContent = 'Results sent to Streamlit.';
+                            analyzeBtn.disabled = false;
+                            updateFrameHeight();
+                            return;
+                        }
+
+                        logStep('Component bridge unavailable. Displaying results inline...');
+                        displayResultsInline(metadata);
+                        status.textContent = 'Results displayed below. Download CSV to export.';
                         analyzeBtn.disabled = false;
                         updateFrameHeight();
-                        return;
+                    } catch (encodingError) {
+                        logStep(`❌ Error encoding results: ${encodingError.message}`);
+                        console.error('Encoding error details:', encodingError);
+                        status.textContent = 'Error encoding results. Check console.';
+                        analyzeBtn.disabled = false;
                     }
-
-                    logStep('Component bridge unavailable. Displaying results inline...');
-                    displayResultsInline(metadata);
-                    status.textContent = 'Results displayed below. Download CSV to export.';
-                    analyzeBtn.disabled = false;
-                    updateFrameHeight();
-                } catch (encodingError) {
-                    logStep(`❌ Error encoding results: ${encodingError.message}`);
-                    console.error('Encoding error details:', encodingError);
-                    status.textContent = 'Error encoding results. Check console.';
-                    analyzeBtn.disabled = false;
-                }
                 } catch (outerError) {
                     console.error('Unexpected error in analyze handler:', outerError);
                     logStep(`❌ Unexpected error: ${outerError.message}`);
